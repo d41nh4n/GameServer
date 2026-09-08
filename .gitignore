@@ -18,7 +18,9 @@ dist/
 .idea/
 .DS_Store
 
-# Secrets / local
+# Secrets / local - machine-specific appsettings (chứa đường dẫn tuyệt đối + JWT secret)
 appsettings.Local.json
 *.local.json
+appsettings.json
+appsettings.Development.json
 .env

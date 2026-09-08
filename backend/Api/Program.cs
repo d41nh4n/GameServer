@@ -1,12 +1,26 @@
+using System.Text;
+using GamePanel.Api;
+using GamePanel.Api.Middleware;
 using GamePanel.Application.Interfaces;
 using GamePanel.Domain.Entities;
+using GamePanel.Infrastructure.Auth;
 using GamePanel.Infrastructure.Data;
 using GamePanel.Infrastructure.GameServers;
 using GamePanel.Infrastructure.Hubs;
 using GamePanel.Infrastructure.Services;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Options models đọc từ appsettings
+builder.Services.Configure<JwtSettings>(builder.Configuration.GetSection(JwtSettings.Section));
+builder.Services.Configure<TailscaleSettings>(builder.Configuration.GetSection(TailscaleSettings.Section));
+builder.Services.Configure<ValheimSettings>(builder.Configuration.GetSection(ValheimSettings.Section));
+
+// Auth service (JWT)
+builder.Services.AddScoped<IAuthService, JwtAuthService>();
 
 // Persistence & SignalR
 builder.Services.AddDbContext<AppDbContext>(o => o.UseSqlite("Data Source=gamepanel.db"));
@@ -22,10 +36,37 @@ builder.Services.AddSignalR();
 builder.Services.AddOpenApi();
 builder.Services.AddCors(p => p
     .AddPolicy("AllowReact", policy => policy
-        .WithOrigins("http://localhost:5173", "http://127.0.0.1:5173")
+        .WithOrigins(
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+            "http://100.82.102.38:5173")
         .AllowAnyMethod()
         .AllowAnyHeader()
         .AllowCredentials()));
+
+// JWT Bearer auth. Key từ appsettings "Jwt:Secret" (không hardcode).
+var jwtSecret = builder.Configuration["Jwt:Secret"]
+    ?? throw new InvalidOperationException("Missing config Jwt:Secret");
+var jwtIssuer = builder.Configuration["Jwt:Issuer"] ?? "GamePanelApi";
+var jwtAudience = builder.Configuration["Jwt:Audience"] ?? "GamePanelClient";
+
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuerSigningKey = true,
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSecret)),
+            ValidateIssuer = true,
+            ValidIssuer = jwtIssuer,
+            ValidateAudience = true,
+            ValidAudience = jwtAudience,
+            ValidateLifetime = true,
+            ClockSkew = TimeSpan.FromMinutes(5),
+        };
+    });
+builder.Services.AddAuthorization(options =>
+    options.AddPolicy("admin", p => p.RequireRole(UserRole.Admin.ToString())));
 
 var app = builder.Build();
 
@@ -63,17 +104,31 @@ using (var scope = app.Services.CreateScope())
     }
 }
 
-// CORS must be installed before route matching so preflight OPTIONS short-circuits.
+// Middleware pipeline: Routing → CORS → Tailscale (tùy chọn) → Auth → Authorization
 app.UseRouting();
 app.UseCors("AllowReact");
+app.UseMiddleware<TailscaleMiddleware>();
+app.UseAuthentication();
+app.UseAuthorization();
 app.MapOpenApi();
 
 app.MapHub<ServerHub>("/hubs/server");
 
 app.MapGet("/api/servers", async (IGameServerRuntime r) => Results.Ok(await r.GetAllAsync()));
+
+// Fake login: trả JWT (không có user store thật ở M4)
+app.MapPost("/api/auth/login", (IAuthService auth) =>
+{
+    var token = auth.GenerateToken(Guid.NewGuid(), UserRole.Admin);
+    return Results.Ok(new { token = token.Value, expiresAt = token.ExpiresAt });
+});
+
 app.MapPost("/api/servers/{id}/start", async (Guid id, IGameServerRuntime r) =>
-    (await r.StartAsync(id)) ? Results.Ok() : Results.BadRequest("Cannot start"));
+    (await r.StartAsync(id)) ? Results.Ok() : Results.BadRequest("Cannot start"))
+    .RequireAuthorization("admin");
+
 app.MapPost("/api/servers/{id}/stop", async (Guid id, IGameServerRuntime r) =>
-    (await r.StopAsync(id)) ? Results.Ok() : Results.BadRequest("Cannot stop"));
+    (await r.StopAsync(id)) ? Results.Ok() : Results.BadRequest("Cannot stop"))
+    .RequireAuthorization("admin");
 
 app.Run();

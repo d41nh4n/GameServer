@@ -13,7 +13,14 @@ public class ValheimAdapter : IGameServerAdapter
         var path = config["GameServers:Valheim:ExecutablePath"];
         _executablePath = string.IsNullOrWhiteSpace(path)
             ? throw new InvalidOperationException("Missing config GameServers:Valheim:ExecutablePath")
-            : path;
+            : ExpandHome(path);
+    }
+
+    /// <summary>Thay "~" và "{HOME}" bằng thư mục home thật để appsettings portablẹ, không hardcode đường dẫn máy.</summary>
+    private static string ExpandHome(string path)
+    {
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        return path.Replace("{HOME}", home).Replace("~", home);
     }
 
     public Task<(bool Success, int Pid)> StartAsync(ServerInstance instance, CancellationToken ct = default)
