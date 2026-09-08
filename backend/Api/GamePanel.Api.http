@@ -1,0 +1,6 @@
+@GamePanel.Api_HostAddress = http://localhost:5073
+
+GET {{GamePanel.Api_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

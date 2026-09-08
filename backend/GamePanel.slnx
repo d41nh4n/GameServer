@@ -1,0 +1,14 @@
+<Solution>
+  <Folder Name="/Api/">
+    <Project Path="Api/GamePanel.Api.csproj" />
+  </Folder>
+  <Folder Name="/Application/">
+    <Project Path="Application/GamePanel.Application.csproj" />
+  </Folder>
+  <Folder Name="/Domain/">
+    <Project Path="Domain/GamePanel.Domain.csproj" />
+  </Folder>
+  <Folder Name="/Infrastructure/">
+    <Project Path="Infrastructure/GamePanel.Infrastructure.csproj" />
+  </Folder>
+</Solution>
