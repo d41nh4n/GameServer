@@ -10,9 +10,11 @@ using GamePanel.Infrastructure.GameServers;
 using GamePanel.Infrastructure.Hubs;
 using GamePanel.Infrastructure.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Http.Connections;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Primitives;
 using Microsoft.IdentityModel.Tokens;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -84,9 +86,40 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             ValidateLifetime = true,
             ClockSkew = TimeSpan.FromMinutes(5),
         };
+
+        // SignalR (WebSocket) nie może ustawić nagłówka Authorization, więc token
+        // przekazujemy (wyłącznie dla /hubs/server) jako access_token w query string.
+        // Path jest sprawdzany po SEGMENTACH (nie prefix substring), więc /hubs/server-evil
+        // NIE dostaje query-token handlingu. Request.Query jest już zdekodowany przez
+        // ASP.NET (bez ręcznego URL-decodu). Jeśli nagłówek Authorization jest obecny,
+        // ma pierwszeństwo — nie nadpisujemy go tokenem z query.
+        options.Events = new JwtBearerEvents
+        {
+            OnMessageReceived = (ctx) =>
+            {
+                var req = ctx.HttpContext?.Request;
+                var path = req?.Path;
+                // Uwaga: OnMessageReceived wykonuje się ZANIM handler domyślnie
+                // wyekstrahuje nagłówek Authorization, więc ctx.Token NIE jest
+                // wiarygodnym źródłem obecności headera — sprawdzamy header wprost.
+                var onHub = path != null && path.HasValue &&
+                    path.Value.StartsWithSegments(PathString.FromUriComponent("/hubs/server"));
+                var authHeader = req?.Headers?["Authorization"];
+                var queryValues = req?.Query["access_token"];
+                var token = HubAccessTokenDecision.Resolve(onHub, authHeader, queryValues);
+                if (token != null)
+                {
+                    ctx.Token = token;
+                }
+                return Task.CompletedTask;
+            },
+        };
     });
 builder.Services.AddAuthorization(options =>
-    options.AddPolicy("admin", p => p.RequireRole(UserRole.Admin.ToString())));
+{
+    options.AddPolicy("admin", p => p.RequireRole(UserRole.Admin.ToString()));
+    options.AddPolicy("authenticated", p => p.RequireAuthenticatedUser());
+});
 
 var app = builder.Build();
 
@@ -134,14 +167,21 @@ using (var scope = app.Services.CreateScope())
         await db.SaveChangesAsync();
     }
 
-    // Bootstrap pierwszego admina (tylko gdy Users pusta). Credentials z env,
-    // NIGDY nie logujemy plaintext hasła.
+    // Bootstrap pierwszego admina (tylko gdy Users pusta). Credentials przez
+    // IConfiguration (klucze GAMEPANEL_BOOTSTRAP_ADMIN_USERNAME/PASSWORD) — dzięki
+    // temu testy mogą je wstrzyknąć AddInMemoryCollection, a produkcja czyta środowisko
+    // procesu (Aspire mapuje zmienne środowiskowe na konfigurację). NIE logujemy hasła.
     var auth = scope.ServiceProvider.GetRequiredService<IAuthService>();
     if (await auth.UsersNeedBootstrapAsync())
     {
+        var cfgUser = builder.Configuration["GAMEPANEL_BOOTSTRAP_ADMIN_USERNAME"] ?? "";
+        var cfgPass = builder.Configuration["GAMEPANEL_BOOTSTRAP_ADMIN_PASSWORD"] ?? "";
+        // Fallback na zmienne środowiskowe (jeśli nie przeszły przez IConfiguration).
         var envUser = Environment.GetEnvironmentVariable("GAMEPANEL_BOOTSTRAP_ADMIN_USERNAME") ?? "";
         var envPass = Environment.GetEnvironmentVariable("GAMEPANEL_BOOTSTRAP_ADMIN_PASSWORD") ?? "";
-        await auth.EnsureBootstrapAdminAsync(envUser, envPass);
+        var bootUser = !string.IsNullOrEmpty(cfgUser) ? cfgUser : envUser;
+        var bootPass = !string.IsNullOrEmpty(cfgPass) ? cfgPass : envPass;
+        await auth.EnsureBootstrapAdminAsync(bootUser, bootPass);
     }
 }
 
@@ -154,14 +194,18 @@ app.UseAuthentication();
 app.UseAuthorization();
 app.MapOpenApi();
 
-app.MapHub<ServerHub>("/hubs/server");
+app.MapHub<ServerHub>("/hubs/server", opts =>
+{
+    opts.CloseOnAuthenticationExpiration = true;
+    opts.AllowStatefulReconnects = false;
+}).RequireAuthorization("authenticated");
 
 app.MapGet("/api/servers", async (IGameServerRuntime r) =>
 {
     var all = await r.GetAllAsync();
     var response = all.Select(ServerResponse.FromDomain).ToArray();
     return Results.Ok(response);
-});
+}).RequireAuthorization("authenticated");
 
 // Login: realna autoryzacja lokalnego użytkownika. Rola/sub z trwałej encji User.
 // Ogólny 401 dla nieistniejącego użytkownika i złego hasła — bez ujawniania przyczyny.
@@ -187,3 +231,8 @@ app.MapPost("/api/servers/{id}/stop", async (Guid id, IGameServerRuntime r) =>
     .RequireAuthorization("admin");
 
 app.Run();
+
+// Eksponuje kompilator-dependentny punkt wejścia Minimal API jako klasę, dzięki
+// czemu WebApplicationFactory<Program> może uruchomić pipeline w pamięci (TestServer)
+// bez otwierania portu. Produkcyjne top-level statements pozostają nietknięte.
+public partial class Program { }

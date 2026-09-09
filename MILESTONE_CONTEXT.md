@@ -2,8 +2,23 @@
 
 ===HEADER===
 Milestone 4 (Auth & Security) | Status DONE | Date 2026-09-08 | Duration 3 | Lang: MVVM
-CR-00A (API Response Data Exposure) | Status DONE | Commit base c1db2ef
-CR-00B (Real Local Authentication) | Status IMPLEMENTED (nie commited/nie uruchamiany) | Commit base d595b2c
+CR-00A (API Response Data Exposure) | Status DONE | Commit c1db2ef
+CR-00B (Real Local Authentication) | Status DONE | Commit aa59fb7
+CR-00C (End-to-end JWT protection) | Status IMPLEMENTED (nie commited/nie uruchamiany) | Commit base aa59fb7
+
+===CR_00C_DELIVERABLES===
+- [x] Backend GET /api/servers → RequireAuthorization("authenticated"); start/stop → "admin" (już)
+- [x] Explicit auth policies: "admin" (RequireRole Admin), "authenticated" (RequireAuthenticatedUser)
+- [x] Hub /hubs/server: JWT auth przez access_token w query string (SignalR nie może ustawić nagłówka)
+- [x] HARDENING-00C: PathString.StartsWithSegments(/hubs/server) (path-boundary: /hubs/server-evil odrzucone); Request.Query["access_token"] (decoded przez ASP.NET, bez ręcznego URL-decodu, Count==1 jednoznaczny, pusty/multi odrzucone); MapHub CloseOnAuthenticationExpiration=true; usunięto QueryTokenExtractor
+- [x] CORRECTNESS-00C: poprawka błędnego założenia (ctx.Token NIE jest wcześniej wypełniony w OnMessageReceived) — nagłówek Authorization sprawdzany bezpośrednio przez Request.Headers["Authorization"]; logika wyciągnięta do czystej HubAccessTokenDecision.Resolve(onHub, authHeader, query) (fail-closed, header ma pierwszeństwo, jednoznaczny token); testy jednostkowe precedencji (header>query) i path-boundary
+- [x] Frontend: login screen, AuthProvider, JWT w sessionStorage, restore, logout, wspólny klient Bearer, 401→logout, 429 komunikat, SignalR po auth accessTokenFactory, stop na logout, SignalR connect/reconnect fail z powodu 401/403→logout (bez logowania tokenu)
+- [x] Login anonimowy + rate-limited (per-IP 429); ServerResponse kontrakt bez zmian
+- [x] Testy: HubAccessTokenDecisionTests (path-boundary, precedencja header>query, fail-closed) + LocalAuth + LoginRateLimit + ServerResponse — 28/28 łącznie
+- [x] TESTY INTEGRACYJNE (WebApplicationFactory/TestServer, fake runtime, temp SQLite): 13/13 przechodzi; cały zestaw 41/41 — anon GET/hub/start/stop 401, non-Admin start/stop 403, admin GET/start/stop 200, bez password/processId, odrzucone mutacje bez wywołań fake, admin start/stop po jednym wywołaniu, hub Authorization/query-token/header-precedence OK
+- [x] HUB AUTH: `[Authorize(Policy = "authenticated")]` na ServerHub i `.RequireAuthorization("authenticated")` na MapHub; anonimowy negotiate zwraca 401
+- [x] CORRECTNESS-fix: OnMessageReceived zwraca Task.CompletedTask (NIE null); null powodował NRE w JwtBearerHandler (500 na każdy request)
+- [x] NIE uruchomiono dotnet run/realnego listenera/systemd/PZ/Valheim/firewall/Tailscale; promt_migration_pz.MD niezmieniony
 
 ===CR_00B_DELIVERABLES===
 - [x] User entity: + NormalizedUsername + PasswordHash (Domain)
