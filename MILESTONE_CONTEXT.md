@@ -3,6 +3,19 @@
 ===HEADER===
 Milestone 4 (Auth & Security) | Status DONE | Date 2026-09-08 | Duration 3 | Lang: MVVM
 CR-00A (API Response Data Exposure) | Status DONE | Commit base c1db2ef
+CR-00B (Real Local Authentication) | Status IMPLEMENTED (nie commited/nie uruchamiany) | Commit base d595b2c
+
+===CR_00B_DELIVERABLES===
+- [x] User entity: + NormalizedUsername + PasswordHash (Domain)
+- [x] AppDbContext: DbSet Users + unique index NormalizedUsername (COLLATE NOCASE w migracji)
+- [x] Migracja 20260909120000_AddLocalUsers (+ Designer + ModelSnapshot zaktualizowane)
+- [x] IAuthService: + AuthenticateAsync / UsersNeedBootstrapAsync / EnsureBootstrapAdminAsync
+- [x] JwtAuthService: auth przez DB + IPasswordHasher<User> (Microsoft.AspNetCore.Identity), gen.sub=user.Id, role z DB
+- [x] LoginContracts: LoginRequest / LoginResponse (Api/CoreContracts)
+- [x] Program.cs: realny login (401 ogólny), bootstrap admin z env (GAMEPANEL_BOOTSTRAP_ADMIN_USERNAME/PASSWORD, tylko gdy Users pusta), rate limit per-IP na login (AddPolicy + IRateLimiterPolicy partitionowana po RemoteIpAddress, 5/min, HTTP 429)
+- [x] HARDENING: partitioning per-IP (LoginRateLimitPolicy, fallback unknown-ip), Normalize→Trim().ToLowerInvariant(), RehashNeeded→persist upgrade hash, dokumentacja PBKDF2 (PasswordHasher default IdentityV3), 429 na odrzucenie
+- [x] Testy (izolowana plikowa SQLite, 20 testów): poprawny login, złe hasło, nieznany user, brak inputów, hash!=plaintext, case-insens username, invariant normalization (ı vs i), JWT sub/role (payload), bootstrap idempotentny, no uncond admin token, per-IP separation (niezależne liczniki), throttling (6. próba odrzucona)
+- [ ] NIE uruchomiono backendu, NIE dotnet-ef update (zgodnie z CR), NIE commitowano/pushowano
 
 ===CR_00A_DELIVERABLES===
 - [x] GET /api/servers → ServerResponse DTO (Api/CoreContracts) zamiast bezpośrednio encji; NIE zwraca password/processId

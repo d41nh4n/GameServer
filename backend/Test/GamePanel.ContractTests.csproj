@@ -12,11 +12,14 @@
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <PackageReference Include="xunit" Version="2.9.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+    <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.19.2" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Api\GamePanel.Api.csproj" />
+    <ProjectReference Include="..\Application\GamePanel.Application.csproj" />
     <ProjectReference Include="..\Domain\GamePanel.Domain.csproj" />
+    <ProjectReference Include="..\Infrastructure\GamePanel.Infrastructure.csproj" />
   </ItemGroup>
 
   <ItemGroup>

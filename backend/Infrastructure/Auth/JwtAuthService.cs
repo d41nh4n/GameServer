@@ -4,26 +4,37 @@ using System.Text;
 using GamePanel.Application.Interfaces;
 using GamePanel.Domain.Entities;
 using GamePanel.Domain.ValueObjects;
+using GamePanel.Infrastructure.Data;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.IdentityModel.Tokens;
 
 namespace GamePanel.Infrastructure.Auth;
 
 /// <summary>
-/// JWT auth với HS256. Key từ cấu hình "Jwt:Secret" (không hardcode).
-/// Claims: sub=userId, role, iat, exp.
+/// JWT auth với HS256 + local user store (SQLite). Key z cấu hửng "Jwt:Secret".
+/// Claims: sub=userId (persisted user Id), role (persisted role), iat, exp.
+/// Hasla przechowywane jako hash (IPasswordHasher) — NIGDY plaintext.
 /// </summary>
 public class JwtAuthService : IAuthService
 {
     private readonly IConfiguration _config;
+    private readonly AppDbContext _db;
+    private readonly IPasswordHasher<User> _hasher;
 
-    public JwtAuthService(IConfiguration config) => _config = config;
+    public JwtAuthService(IConfiguration config, AppDbContext db, IPasswordHasher<User> hasher)
+    {
+        _config = config;
+        _db = db;
+        _hasher = hasher;
+    }
 
     private (string Secret, string Issuer, string Audience, int Minutes) Settings()
     {
         var secret = _config["Jwt:Secret"];
         if (string.IsNullOrWhiteSpace(secret) || secret.StartsWith("CHANGE_ME"))
-            throw new InvalidOperationException("Jwt:Secret chưa được cấu hình (bắt buộc, >= 32 ký tự).");
+            throw new InvalidOperationException("Jwt:Secret a été configuré (obligatoire, >= 32 caractères).");
         var issuer = _config["Jwt:Issuer"] ?? "GamePanelApi";
         var audience = _config["Jwt:Audience"] ?? "GamePanelClient";
         var minutes = int.TryParse(_config["Jwt:ExpiryMinutes"], out var m) && m > 0 ? m : 30;
@@ -32,6 +43,9 @@ public class JwtAuthService : IAuthService
 
     private static SymmetricSecurityKey Key(string secret) =>
         new(Encoding.UTF8.GetBytes(secret));
+
+    private static string Normalize(string username) =>
+        username.Trim().ToLowerInvariant();
 
     public JwtToken GenerateToken(Guid userId, UserRole role)
     {
@@ -70,7 +84,7 @@ public class JwtAuthService : IAuthService
                     ValidateAudience = true,
                     ValidAudience = audience,
                     ValidateLifetime = true,
-                    ClockSkew = TimeSpan.Zero,
+                    ClockSkew = TimeSpan.FromMinutes(5),
                 }, out _);
 
             var sub = principal.FindFirst(JwtRegisteredClaimNames.Sub)?.Value;
@@ -87,5 +101,60 @@ public class JwtAuthService : IAuthService
         {
             return null; // invalid signature / expired / malformed
         }
+    }
+
+    public async Task<bool> UsersNeedBootstrapAsync(CancellationToken ct = default)
+    {
+        return !(await _db.Users.AnyAsync(ct));
+    }
+
+    public async Task EnsureBootstrapAdminAsync(string envUsername, string envPassword, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(envUsername) || string.IsNullOrWhiteSpace(envPassword))
+            throw new InvalidOperationException("Bootstrap admin requires GAMEPANEL_BOOTSTRAP_ADMIN_USERNAME and GAMEPANEL_BOOTSTRAP_ADMIN_PASSWORD when Users table is empty.");
+
+        if (!await UsersNeedBootstrapAsync(ct))
+            return; // idempotent — already has users
+
+        var normalized = Normalize(envUsername);
+        var existing = await _db.Users.FirstOrDefaultAsync(x => x.NormalizedUsername == normalized, ct);
+        if (existing != null) return; // nie nadpisuj
+
+        var dummy = new User { Id = Guid.NewGuid(), Username = normalized };
+        var hash = _hasher.HashPassword(dummy, envPassword);
+
+        _db.Users.Add(new User
+        {
+            Id = Guid.NewGuid(),
+            Username = envUsername,
+            NormalizedUsername = normalized,
+            PasswordHash = hash,
+            Role = UserRole.Admin,
+        });
+        await _db.SaveChangesAsync(ct);
+    }
+
+    public async Task<User?> AuthenticateAsync(string username, string password, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(password))
+            return null;
+
+        var normalized = Normalize(username);
+        var user = await _db.Users.FirstOrDefaultAsync(x => x.NormalizedUsername == normalized, ct);
+        if (user == null)
+            return null; // generic — nie ujawniamy czym była 404
+
+        var result = _hasher.VerifyHashedPassword(user, user.PasswordHash, password);
+        if (result != PasswordVerificationResult.Success && result != PasswordVerificationResult.SuccessRehashNeeded)
+            return null; // generic — złe hasło
+
+        // Rehash upgrade (np. za niski iteration count). Nie ujawnia plaintext.
+        if (result == PasswordVerificationResult.SuccessRehashNeeded)
+        {
+            user.PasswordHash = _hasher.HashPassword(user, password);
+            await _db.SaveChangesAsync(ct);
+        }
+
+        return user;
     }
 }
