@@ -1,6 +1,6 @@
 namespace GamePanel.Domain.Entities;
 
-public enum GameServerType { Valheim, Minecraft }
+public enum GameServerType { Valheim, Minecraft, ProjectZomboid }
 public enum ServerStatus { Stopped, Running, Starting, Stopping }
 
 public class ServerInstance

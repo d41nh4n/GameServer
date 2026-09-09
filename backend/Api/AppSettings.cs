@@ -21,3 +21,17 @@ public class ValheimSettings
     public const string Section = "GameServers:Valheim";
     public string ExecutablePath { get; set; } = "";
 }
+
+public class ProjectZomboidSettings
+{
+    public const string Section = "GameServers:ProjectZomboid";
+    public string ServiceName { get; set; } = "pzserver-game.service";
+    public string ControlExecutable { get; set; } = "/usr/local/sbin/pz-gamectl";
+    public string InstallPath { get; set; } = "{PZ_HOME}/steamcmd/zomboid";
+    public string ConfigDirectory { get; set; } = "{PZ_HOME}/Zomboid/Server";
+    public string DefaultServerName { get; set; } = "servertest_new";
+    public string RconHost { get; set; } = "127.0.0.1";
+    public int RconPort { get; set; } = 27015;
+    // Sekrety (np. RconPassword) trzymane w env / machine-specific appsettings — nie w źródłach.
+    public string SudoUser { get; set; } = "";
+}

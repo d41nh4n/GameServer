@@ -57,11 +57,36 @@ Auth JWT + Tailscale whitelist (Option A) — HOÀN THÀNH
 - Muốn endpoint chỉ từ Tailscale → bật Tailscale:Require=true (middleware sẵn)
 
 ===NEXT_MILESTONE_OPTIONS===
+- Follow-up CR-PZ: RCON graceful save/broadcast/players (CR-PZ-02), logs+journal streaming (CR-PZ-03), servertest.ini editor (CR-PZ-04), SandboxVars.lua (CR-PZ-05), Workshop/Mods manager (CR-PZ-06), World/Profile manager (CR-PZ-07), health/readiness metrics (CR-PZ-08)
 - Option M5-A: Config UI (POST cấu hình qua UI, ~2h MEDIUM)
 - Option M5-B: SteamCMD auto-install Valheim binary (~2-3h HIGH)
 - Option M5-C: Logs/Monitor backend (~3-4h MED-HIGH)
-- Option B (M4 cũ): Auth JWT đã xong → chuyển sang xử lý role-based nếu cần
-- Luôn ALWAYS/prioritized — xem todo trên
+
+===PZ_CR_DONE (systemd-backed Project Zomboid adapter)===
+- [x] GameServerType.ProjectZomboid enum (ServerInstance.cs)
+- [x] ProjectZomboidAdapter (Infrastructure/GameServers/) — systemd lifecycle via /usr/local/sbin/pz-gamectl + sudo -n; status z systemctl show (ActiveState/MainPID), nie z DB
+- [x] ICommandRunner + ProcessCommandRunner (ProcessStartInfo + ArgumentList, bez shell) — testowalny, wstrzykiwany
+- [x] GameServerAdapterFactory: ProjectZomboid → ProjectZomboidAdapter
+- [x] Program.cs: rejestracja ICommandRunner + ProjectZomboidAdapter (czyta config przez IConfiguration), seed PZ (Type=2, WorldName=servertest_new)
+- [x] appsettings.example.json + .Development.json: GameServers:ProjectZomboid (ServiceName, ControlExecutable, RconHost/Port, SudoUser)
+- [x] Reconcile stale-PID w GameServerManager.GetAllAsync (adapter źródłem prawdy: /proc dla Valheim, systemd dla PZ)
+- [x] Config adapter przez IConfiguration (nie Configure<T> — brak sekcji nie rejestruje usługi!)
+- [x] bounded MainPID wait (max 150s) — Type=simple zgłasza active przed wstaniem PZ
+
+===VERIFIED_END_TO_END (PZ)_===
+- [x] Backend restart + GET /servers → PZ status=1 pid=44566 (real MainPID, nie stale DB)
+- [x] POST /api/servers/{pz}/start (DB Stopped, systemd active) → 200, MainPID reconciled 40418
+- [x] POST /start na już-running → 400 (idempotentny manager)
+- [x] POST /api/servers/{pz}/stop → 200, systemd inactive, DB Stopped/pid=None
+- [x] START cold boot (after stop) → server doładował, MainPID 44566 po ~2min (bounded retry)
+- [x] Valheim stale pid=999999 → GET reconcile do Stopped/pid=null; restart Valheim → 200 (lifecycle OK)
+- [x] dotnet build: 0 Error, 0 Warning
+
+===DEPLOY_STEPS (sudoers/sudo)===
+- nh4n ma NOPASSWD:ALL (sudo -l potwierdza) — adapter używa `sudo -n /usr/local/sbin/pz-gamectl <subcmd>`
+- Wrapper /usr/local/sbin/pz-gamectl to whitelist: start/stop/restart/is-active/status/show/logs/stream
+- pzserver-game.service: KillSignal=SIGINT, TimeoutStopSec=90, ExecStartPre=preflight, SuccessExitStatus=130
+- RCONPort=27015 (non-secret; password w servertest_new.ini — NIE commitować)
 
 ===CRITICAL_PATHS===
 - Config binary: appsettings.json "GameServers:Valheim:ExecutablePath" (placeholder {HOME})
@@ -72,6 +97,9 @@ Auth JWT + Tailscale whitelist (Option A) — HOÀN THÀNH
 - Tailscale middleware: backend/Api/Middleware/TailscaleMiddleware.cs
 - Auth config: backend/Api/Program.cs (AddAuthentication/AddJwtBearer/AddAuthorization)
 - GameServerManager: backend/Infrastructure/Services/GameServerManager.cs
+- PZ adapter: backend/Infrastructure/GameServers/ProjectZomboidAdapter.cs
+- Command runner: backend/Infrastructure/GameServers/ProcessCommandRunner.cs + ICommandRunner.cs
+- PZ config: appsettings "GameServers:ProjectZomboid" (ServiceName/ControlExecutable/SudoUser)
 - Adapters: backend/Infrastructure/GameServers/
 - SignalR Hub: backend/Infrastructure/Hubs/ServerHub.cs
 - DB context: backend/Infrastructure/Data/AppDbContext.cs

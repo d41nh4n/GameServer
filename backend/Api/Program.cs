@@ -18,6 +18,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.Configure<JwtSettings>(builder.Configuration.GetSection(JwtSettings.Section));
 builder.Services.Configure<TailscaleSettings>(builder.Configuration.GetSection(TailscaleSettings.Section));
 builder.Services.Configure<ValheimSettings>(builder.Configuration.GetSection(ValheimSettings.Section));
+builder.Services.Configure<ProjectZomboidSettings>(builder.Configuration.GetSection(ProjectZomboidSettings.Section));
 
 // Auth service (JWT)
 builder.Services.AddScoped<IAuthService, JwtAuthService>();
@@ -29,6 +30,12 @@ builder.Services.AddDbContext<AppDbContext>(o => o.UseSqlite("Data Source=gamepa
 builder.Services.AddScoped<GameServerManager>();
 builder.Services.AddScoped<IGameServerRuntime>(sp => sp.GetRequiredService<GameServerManager>());
 builder.Services.AddScoped<ValheimAdapter>();
+builder.Services.AddScoped<ICommandRunner>(_ => new ProcessCommandRunner());
+builder.Services.AddScoped<ProjectZomboidAdapter>(sp =>
+{
+    var runner = sp.GetRequiredService<ICommandRunner>();
+    return new ProjectZomboidAdapter(runner, builder.Configuration);
+});
 builder.Services.AddScoped<IGameServerAdapterFactory, GameServerAdapterFactory>();
 
 builder.Services.AddSignalR();
@@ -98,6 +105,17 @@ using (var scope = app.Services.CreateScope())
                 Status = ServerStatus.Stopped,
                 Port = 25565,
                 WorldName = "world",
+                Password = "",
+            },
+            new ServerInstance
+            {
+                Id = Guid.Parse("33333333-3333-3333-3333-333333333333"),
+                Name = "Project Zomboid Server",
+                GameType = "ProjectZomboid",
+                Type = GameServerType.ProjectZomboid,
+                Status = ServerStatus.Stopped,
+                Port = 16261,
+                WorldName = "servertest_new",
                 Password = "",
             });
         await db.SaveChangesAsync();
