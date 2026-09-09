@@ -11,4 +11,7 @@
   <Folder Name="/Infrastructure/">
     <Project Path="Infrastructure/GamePanel.Infrastructure.csproj" />
   </Folder>
+  <Folder Name="/Test/">
+    <Project Path="Test/GamePanel.ContractTests.csproj" />
+  </Folder>
 </Solution>

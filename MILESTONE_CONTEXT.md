@@ -2,6 +2,14 @@
 
 ===HEADER===
 Milestone 4 (Auth & Security) | Status DONE | Date 2026-09-08 | Duration 3 | Lang: MVVM
+CR-00A (API Response Data Exposure) | Status DONE | Commit base c1db2ef
+
+===CR_00A_DELIVERABLES===
+- [x] GET /api/servers → ServerResponse DTO (Api/CoreContracts) zamiast bezpośrednio encji; NIE zwraca password/processId
+- [x] Mapper ServerResponse.FromDomain (enum jako string; zachowane id/name/gameType/type/status/port/worldName)
+- [x] Test projekt Test/GamePanel.ContractTests.csproj (xunit) — 3 testy kontraktu (pola wymagane, brak password/processId, reprezentacja enum) — pass
+- [x] .gitignore + *.db-wal + *.db-shm (hygiene — SQLite runtime files)
+- [x] Frontend build: bez zmian, kompiluje się (kontrakt zachowany)
 
 ===CURRENT_STATE===
 ASP.NET Core 10 (SDK ~/.dotnet) GamePanel.slnx (Domain/Application/Infrastructure/Api) + SQLite (gamepanel.db, EF Core Migrations) + SignalR Hub /hubs/server. Frontend React TS Vite (:5173) + @microsoft/signalr. Backend :5000. CORS: WithOrigins + AllowCredentials + thêm origin Tailscale. Bind 0.0.0.0:

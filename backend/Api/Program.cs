@@ -1,5 +1,6 @@
 using System.Text;
 using GamePanel.Api;
+using GamePanel.Api.CoreContracts;
 using GamePanel.Api.Middleware;
 using GamePanel.Application.Interfaces;
 using GamePanel.Domain.Entities;
@@ -132,7 +133,12 @@ app.MapOpenApi();
 
 app.MapHub<ServerHub>("/hubs/server");
 
-app.MapGet("/api/servers", async (IGameServerRuntime r) => Results.Ok(await r.GetAllAsync()));
+app.MapGet("/api/servers", async (IGameServerRuntime r) =>
+{
+    var all = await r.GetAllAsync();
+    var response = all.Select(ServerResponse.FromDomain).ToArray();
+    return Results.Ok(response);
+});
 
 // Fake login: trả JWT (không có user store thật ở M4)
 app.MapPost("/api/auth/login", (IAuthService auth) =>
