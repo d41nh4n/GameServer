@@ -19,6 +19,8 @@ export type Server = {
   ready: boolean;
 };
 
+export type ServerOperationJob = { id: string; serverId: string; kind: number; status: number; error?: string | null };
+
 export class ApiError extends Error {
   readonly status: number;
   constructor(status: number, message: string) {
@@ -139,8 +141,12 @@ export class AuthProvider {
     return this.request<Server[]>("/api/servers");
   }
 
-  async trigger(id: string, action: "start" | "stop") {
-    await this.request<void>(`/api/servers/${id}/${action}`, { method: "POST" });
+  trigger(id: string, action: "start" | "stop" | "restart"): Promise<ServerOperationJob> {
+    return this.request<ServerOperationJob>(`/api/servers/${id}/${action}`, { method: "POST" });
+  }
+
+  operation(id: string): Promise<ServerOperationJob> {
+    return this.request<ServerOperationJob>(`/api/operations/${id}`);
   }
 
   // ─── PZ endpoints ───
@@ -203,12 +209,5 @@ export class AuthProvider {
   async pzBackups(): Promise<any> { return this.request<any>("/api/pz/backups"); }
   async pzCreateBackup(): Promise<any> { return this.request<any>("/api/pz/backups", { method: "POST" }); }
   async pzRollback(version: string): Promise<any> { return this.request<any>(`/api/pz/backups/${encodeURIComponent(version)}/rollback`, { method: "POST" }); }
-  async globalMetrics(): Promise<any> { return this.request<any>("/api/metrics/global"); }
-  async aggregates(options: { limit?: number; serverId?: string; fromUtc?: string; toUtc?: string } = {}): Promise<any[]> {
-    const params = new URLSearchParams({ limit: String(options.limit ?? 288) });
-    if (options.serverId) params.set("serverId", options.serverId);
-    if (options.fromUtc) params.set("fromUtc", options.fromUtc);
-    if (options.toUtc) params.set("toUtc", options.toUtc);
-    return this.request<any[]>(`/api/aggregates?${params}`);
-  }
+  async resourcesOverview(): Promise<any> { return this.request<any>("/api/resources/overview"); }
 }

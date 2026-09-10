@@ -8,8 +8,9 @@ Control panel for adopted **Valheim** and **Project Zomboid** services, built wi
 - Project Zomboid: `pzserver-game.service`, systemd adoption, save-before-stop, RCON, players/kick, logs, config, SandboxVars, mods, operations metrics, backups and safe rollback.
 - Flask PZ manager remains active on `127.0.0.1:8081` as fallback.
 - Authenticated API with JWT, admin-only mutations, SignalR status updates and optional Tailscale filtering.
-- Observability: AuditLogs, SystemEvents, five-minute LogAggregates and global metrics dashboard.
-- Responsive dark UI with server overview charts and per-server feature tabs.
+- Asynchronous Start/Stop/Restart queue returns immediately, blocks duplicate operations and exposes job status.
+- Observability: AuditLogs, SystemEvents and live resource usage. Journal views support text/severity filters and opt-in five-second refresh.
+- Responsive dark UI with host resource usage, per-server resource detail and per-server feature tabs.
 
 Detailed source/feature documentation: [`docs/SOURCE_KNOWLEDGE_BASE.md`](docs/SOURCE_KNOWLEDGE_BASE.md).
 
@@ -57,7 +58,7 @@ For remote access, bind the API to the host Tailscale address and run the fronte
 - `/api/pz/ops/health`
 - `/api/pz/backups*`
 - `/api/valheim/monitor`, `/api/valheim/logs`, `/api/valheim/members`, `/api/valheim/backups*`
-- `/api/audit`, `/api/events`, `/api/aggregates`, `/api/metrics/global`
+- `/api/audit`, `/api/events`, `/api/resources/overview`
 
 ## Safety rules
 

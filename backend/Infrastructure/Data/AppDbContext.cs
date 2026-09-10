@@ -10,7 +10,6 @@ public class AppDbContext : DbContext
     public DbSet<User> Users => Set<User>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     public DbSet<SystemEvent> SystemEvents => Set<SystemEvent>();
-    public DbSet<LogAggregate> LogAggregates => Set<LogAggregate>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -79,13 +78,5 @@ public class AppDbContext : DbContext
             e.HasIndex(x => new { x.ServerInstanceId, x.CreatedAtUtc });
         });
 
-        modelBuilder.Entity<LogAggregate>(e =>
-        {
-            e.ToTable("LogAggregates");
-            e.HasKey(x => x.Id);
-            e.Property(x => x.LastErrorMessage).HasMaxLength(255);
-            e.HasIndex(x => new { x.ServerInstanceId, x.WindowStartUtc }).IsUnique();
-            e.HasIndex(x => x.WindowStartUtc);
-        });
     }
 }

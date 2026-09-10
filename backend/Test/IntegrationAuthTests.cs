@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http;
 using System.Text;
+using System.Text.Json;
 using Microsoft.AspNetCore.Mvc.Testing;
 using GamePanel.Domain.Entities;
 using GamePanel.Infrastructure.Auth;
@@ -112,13 +113,14 @@ public class IntegrationAuthTests : IDisposable
     }
 
     [Fact]
-    public async Task Admin_Stop_Returns200_InvokesRuntime()
+    public async Task Admin_Stop_Returns202_ThenInvokesRuntime()
     {
         var admin = await LoginAdmin();
         var before = _runtime.StopCallCount;
-        var (status, _) = await Send("POST", "/api/servers/11111111-1111-1111-1111-111111111111/stop", null, admin, null);
-        Assert.Equal(HttpStatusCode.OK, status);
-        Assert.Equal(before + 1, _runtime.StopCallCount);
+        var (status, body) = await Send("POST", "/api/servers/11111111-1111-1111-1111-111111111111/stop", null, admin, null);
+        Assert.Equal(HttpStatusCode.Accepted, status);
+        Assert.Contains("\"id\"", Str(body), StringComparison.OrdinalIgnoreCase);
+        await WaitUntilAsync(() => _runtime.StopCallCount == before + 1);
     }
 
     [Fact]
@@ -196,13 +198,42 @@ public class IntegrationAuthTests : IDisposable
     }
 
     [Fact]
-    public async Task Admin_Start_Returns200_InvokesRuntime()
+    public async Task Admin_Start_Returns202_ThenInvokesRuntime()
     {
         var admin = await LoginAdmin();
         var before = _runtime.StartCallCount;
-        var (status, _) = await Send("POST", "/api/servers/11111111-1111-1111-1111-111111111111/start", null, admin, null);
+        var (status, body) = await Send("POST", "/api/servers/11111111-1111-1111-1111-111111111111/start", null, admin, null);
+        Assert.Equal(HttpStatusCode.Accepted, status);
+        using var json = JsonDocument.Parse(Str(body));
+        var jobId = json.RootElement.GetProperty("id").GetGuid();
+        await WaitUntilAsync(() => _runtime.StartCallCount == before + 1);
+        var (jobStatus, jobBody) = await Send("GET", $"/api/operations/{jobId}", null, admin, null);
+        Assert.Equal(HttpStatusCode.OK, jobStatus);
+        Assert.Equal(2, JsonDocument.Parse(Str(jobBody)).RootElement.GetProperty("status").GetInt32());
+    }
+
+    [Fact]
+    public async Task Anon_Restart_Returns401_NoRuntimeInvocation()
+    {
+        var starts = _runtime.StartCallCount; var stops = _runtime.StopCallCount;
+        var (status, _) = await Send("POST", "/api/servers/11111111-1111-1111-1111-111111111111/restart", null, null, null);
+        Assert.Equal(HttpStatusCode.Unauthorized, status);
+        Assert.Equal(starts, _runtime.StartCallCount); Assert.Equal(stops, _runtime.StopCallCount);
+    }
+
+    [Fact]
+    public async Task Resources_RequiresAuthentication_ThenReturnsHostAndServerContract()
+    {
+        var (anonStatus, _) = await Send("GET", "/api/resources/overview", null, null, null);
+        Assert.Equal(HttpStatusCode.Unauthorized, anonStatus);
+
+        var admin = await LoginAdmin();
+        var (status, body) = await Send("GET", "/api/resources/overview", null, admin, null);
         Assert.Equal(HttpStatusCode.OK, status);
-        Assert.Equal(before + 1, _runtime.StartCallCount);
+        using var json = JsonDocument.Parse(Str(body));
+        Assert.True(json.RootElement.GetProperty("host").TryGetProperty("cpuPercent", out _));
+        Assert.True(json.RootElement.GetProperty("host").TryGetProperty("memoryTotalKb", out _));
+        Assert.Equal(JsonValueKind.Array, json.RootElement.GetProperty("servers").ValueKind);
     }
 
     [Fact]
@@ -234,6 +265,13 @@ public class IntegrationAuthTests : IDisposable
         var admin = await LoginAdmin();
         var (status, _) = await Send("POST", "/hubs/server/negotiate?negotiateVersion=1", null, admin, "bogus-query-token");
         Assert.True(status != HttpStatusCode.Unauthorized, "ważny header wygrywa nad złym query, było " + status);
+    }
+
+    private static async Task WaitUntilAsync(Func<bool> predicate)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(3);
+        while (!predicate() && DateTime.UtcNow < deadline) await Task.Delay(20);
+        Assert.True(predicate(), "Queued operation was not executed before timeout");
     }
 
     public void Dispose()

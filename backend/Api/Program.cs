@@ -1,4 +1,5 @@
 using System.Text;
+using System.Security.Claims;
 using GamePanel.Api;
 using GamePanel.Api.CoreContracts;
 using GamePanel.Api.Middleware;
@@ -94,11 +95,9 @@ builder.Services.AddScoped<PzWorldBackupService>();
 builder.Services.AddScoped<ValheimMonitoringService>();
 builder.Services.AddScoped<AuditLogService>();
 builder.Services.AddScoped<SystemEventService>();
-builder.Services.AddScoped<LogAggregateService>();
-builder.Services.AddScoped<GlobalMetricsService>();
-if (builder.Configuration.GetValue("Metrics:EnableLogAggregateCollector", false))
-    builder.Services.AddHostedService<LogAggregateCollector>();
-
+builder.Services.AddScoped<ResourceMetricsService>();
+builder.Services.AddSingleton<ServerOperationQueue>();
+builder.Services.AddHostedService<ServerOperationWorker>();
 builder.Services.AddSignalR();
 
 // Login rate limiting partitionowane per client IP (5 prób / 1 minuta).
@@ -285,19 +284,47 @@ var loginRoute = app.MapPost("/api/auth/login", async (LoginRequest body, IAuthS
     return Results.Ok(new LoginResponse(token.Value, token.ExpiresAt));
 }).RequireRateLimiting("login");
 
-app.MapPost("/api/servers/{id}/start", async (Guid id, IGameServerRuntime r, AuditLogService audit, HttpContext http) =>
+app.MapPost("/api/servers/{id}/start", async (Guid id, ServerOperationQueue queue, AuditLogService audit, HttpContext http) =>
 {
-    var success = await r.StartAsync(id);
-    await audit.RecordAsync(http.User, AuditActions.StartServer, id, success, success ? "OK" : "START_FAILED", new { action = "start" });
-    return success ? Results.Ok() : Results.BadRequest("Cannot start");
+    try
+    {
+        var subject = http.User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? http.User.FindFirst("sub")?.Value;
+        var userId = Guid.TryParse(subject, out var parsed) ? parsed : (Guid?)null;
+        var job = queue.Enqueue(id, ServerOperationKind.Start, userId, http.User.Identity?.Name ?? "admin");
+        await audit.RecordAsync(http.User, AuditActions.StartServer, id, true, "QUEUED", new { action = "start", jobId = job.Id });
+        return Results.Accepted($"/api/operations/{job.Id}", job);
+    }
+    catch (InvalidOperationException e) { return Results.Conflict(new { error = e.Message }); }
 }).RequireAuthorization("admin");
 
-app.MapPost("/api/servers/{id}/stop", async (Guid id, IGameServerRuntime r, AuditLogService audit, HttpContext http) =>
+app.MapPost("/api/servers/{id}/stop", async (Guid id, ServerOperationQueue queue, AuditLogService audit, HttpContext http) =>
 {
-    var success = await r.StopAsync(id);
-    await audit.RecordAsync(http.User, AuditActions.StopServer, id, success, success ? "OK" : "STOP_FAILED", new { action = "stop" });
-    return success ? Results.Ok() : Results.BadRequest("Cannot stop");
+    try
+    {
+        var subject = http.User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? http.User.FindFirst("sub")?.Value;
+        var userId = Guid.TryParse(subject, out var parsed) ? parsed : (Guid?)null;
+        var job = queue.Enqueue(id, ServerOperationKind.Stop, userId, http.User.Identity?.Name ?? "admin");
+        await audit.RecordAsync(http.User, AuditActions.StopServer, id, true, "QUEUED", new { action = "stop", jobId = job.Id });
+        return Results.Accepted($"/api/operations/{job.Id}", job);
+    }
+    catch (InvalidOperationException e) { return Results.Conflict(new { error = e.Message }); }
 }).RequireAuthorization("admin");
+
+app.MapPost("/api/servers/{id}/restart", (Guid id, ServerOperationQueue queue, HttpContext http) =>
+{
+    try
+    {
+        var subject = http.User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? http.User.FindFirst("sub")?.Value;
+        var userId = Guid.TryParse(subject, out var parsed) ? parsed : (Guid?)null;
+        var job = queue.Enqueue(id, ServerOperationKind.Restart, userId, http.User.Identity?.Name ?? "admin");
+        return Results.Accepted($"/api/operations/{job.Id}", job);
+    }
+    catch (InvalidOperationException e) { return Results.Conflict(new { error = e.Message }); }
+}).RequireAuthorization("admin");
+
+app.MapGet("/api/operations/{id}", (Guid id, ServerOperationQueue queue) =>
+    queue.Get(id) is { } job ? Results.Ok(job) : Results.NotFound())
+    .RequireAuthorization("authenticated");
 
 app.MapGet("/api/servers/{id}/logs", async (Guid id, int? lines, AppDbContext db, IServiceProvider sp) =>
 {
@@ -515,6 +542,12 @@ app.MapPost("/api/pz/backups/{version}/rollback", async (string version, PzWorld
     catch (Exception e) { return Results.BadRequest(new { success = false, error = e.Message }); }
 }).RequireAuthorization("admin");
 
+app.MapGet("/api/resources/overview", async (ResourceMetricsService resources, CancellationToken ct) =>
+{
+    try { return Results.Ok(await resources.GetOverviewAsync(ct)); }
+    catch (Exception e) { return Results.Problem(e.Message); }
+}).RequireAuthorization("authenticated");
+
 app.MapGet("/api/audit", async (Guid? serverId, int? limit, AppDbContext db) =>
 {
     var take = Math.Clamp(limit ?? 100, 1, 500);
@@ -527,18 +560,6 @@ app.MapGet("/api/events", async (Guid? serverId, int? limit, SystemEventService 
 {
     var take = Math.Clamp(limit ?? 100, 1, 500);
     return Results.Ok(await events.Query(serverId).Take(take).ToListAsync());
-}).RequireAuthorization("authenticated");
-
-app.MapGet("/api/aggregates", async (Guid? serverId, DateTime? fromUtc, DateTime? toUtc, int? limit, LogAggregateService aggregates) =>
-{
-    var take = Math.Clamp(limit ?? 100, 1, 1000);
-    return Results.Ok(await aggregates.Query(serverId, fromUtc, toUtc).Take(take).ToListAsync());
-}).RequireAuthorization("authenticated");
-
-app.MapGet("/api/metrics/global", async (GlobalMetricsService metrics, CancellationToken ct) =>
-{
-    try { return Results.Ok(await metrics.GetAsync(ct)); }
-    catch (Exception e) { return Results.Problem(e.Message); }
 }).RequireAuthorization("authenticated");
 
 app.Run();

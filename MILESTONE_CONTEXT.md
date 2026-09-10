@@ -139,27 +139,27 @@ Auth JWT + Tailscale whitelist (Option A) — HOÀN THÀNH
 - [x] Authenticated timeline endpoint: `GET /api/events` with server filter and bounded limit
 - [x] Migration applied after external SQLite backup: `AddSystemEvents`
 
-===PHASE_3_LOG_AGGREGATES===
+===PHASE_3_LOG_AGGREGATES_RETIRED===
 - [x] LogAggregates entity + EF model: window, warning/error/fatal counts, player join/leave counts, last error
 - [x] Parser separates aggregate counters from raw log text; raw logs remain in journal/filesystem
 - [x] Upsert service with unique `(ServerInstanceId, WindowStartUtc)` window key
 - [x] Authenticated query endpoint: `GET /api/aggregates` with server/time filters and bounded limit
 - [x] Migration applied after external SQLite backup: `AddLogAggregates`
 
-===PHASE_4_LOG_AGGREGATE_COLLECTOR===
+===PHASE_4_LOG_AGGREGATE_COLLECTOR_RETIRED===
 - [x] BackgroundService aligns to configurable UTC windows (default 5 minutes)
 - [x] Reads bounded systemd journal windows for adopted systemd servers
 - [x] Parses counters and upserts LogAggregates; never stores raw journal text
 - [x] Collector enabled in current production `appsettings.json`; feature flag remains false in example template
 - [x] Interval configurable via `Metrics:LogAggregateIntervalMinutes`
 
-===PHASE_5_GLOBAL_METRICS===
+===PHASE_5_GLOBAL_METRICS_RETIRED===
 - [x] GlobalMetricsService aggregates server status and 24h LogAggregate counters
 - [x] Authenticated endpoint: `GET /api/metrics/global`
 - [x] Responsive server overview metrics strip: Running, Ready, Stopped, Errors 24h, Fatal 24h
 - [x] Metrics gracefully hide when production migrations are not yet applied
 
-===PHASE_5_GLOBAL_METRICS===
+===PHASE_5_GLOBAL_METRICS_RETIRED===
 - [x] GlobalMetricsService aggregates server status and 24h LogAggregate counters
 - [x] Authenticated endpoint: `GET /api/metrics/global`
 - [x] Authenticated endpoint: `GET /api/aggregates?limit=...`
@@ -178,12 +178,37 @@ Auth JWT + Tailscale whitelist (Option A) — HOÀN THÀNH
 - [x] API routes documented in source knowledge base
 
 ===PHASE_7_UI_REFACTOR_AND_KNOWLEDGE_BASE===
+- [x] Host resource component shows CPU, RAM and disk usage from `/api/resources/overview`
+- [x] Per-server resource rows show online state, PID, CPU, RSS memory, threads and file descriptors
 - [x] `App.tsx` reduced to orchestration: auth, SignalR, navigation and lifecycle actions
 - [x] Feature components separated under `frontend/game-panel-web/src/components/`
 - [x] Valheim Status & Checks tab exposes runtime, readiness, PID, members and world state
 - [x] Shared JSON client sets `Content-Type: application/json` to prevent HTTP 415 body-binding failures
 - [x] `docs/SOURCE_KNOWLEDGE_BASE.md` documents architecture, source map, API groups, UI matrix, metrics and safety rules
 - [x] Root README and frontend README updated for current implementation
+
+===PHASE_8_RESOURCE_USAGE_AND_REMOVE_LOG_METRICS===
+- [x] Removed LogAggregate collector, service, entity and active aggregate/global-metrics API routes
+- [x] Removed `LogAggregates` from EF model and applied `20260910130230_DropLogAggregates`
+- [x] SQLite backup created before drop: `/home/nh4n/backups/game-server-panel/gamepanel-before-drop-logaggregates-20260910T130248Z.db`
+- [x] Added authenticated `GET /api/resources/overview`
+- [x] Host component shows CPU, RAM and disk usage
+- [x] Per-server component shows online state, PID, CPU, RSS RAM, threads and file descriptors
+- [x] Server detail view shows selected server live resource usage
+- [x] Resource snapshots are realtime and not persisted in SQLite
+
+===PHASE_9_ASYNC_OPERATION_QUEUE===
+- [x] In-memory single-reader operation queue for Start, Stop and Restart
+- [x] API returns `202 Accepted` immediately with operation ID
+- [x] `GET /api/operations/{id}` reports Queued, Running, Succeeded or Failed
+- [x] Duplicate queued/running operation for the same server returns `409 Conflict`
+- [x] Background worker resolves scoped runtime and performs lifecycle action outside request timeout
+- [x] UI polls operation status every five seconds and relies on SignalR for server state changes
+- [x] Start/Stop/Restart buttons no longer wait for slow game boot response
+- [x] Queue unit/worker/integration tests added; backend suite 74/74 passed
+- [x] Manual API: resource overview HTTP 200; idempotent Start returned 202 then Succeeded for Valheim/PZ
+- [x] Manual safety check: Valheim PID `167796` and PZ PID `184252` unchanged before/after queue test
+- [x] Feature gap matrix added: `docs/FEATURE_GAP_MATRIX.md`
 
 ===CURRENT_STATE_2026-09-10===
 - Backend .NET 10 listens on `http://100.82.102.38:5000` under group context including `pzserver`; frontend Vite listens on `0.0.0.0:5173`.
@@ -192,10 +217,10 @@ Auth JWT + Tailscale whitelist (Option A) — HOÀN THÀNH
 - PZ runtime data: config `servertest_new.ini`, SandboxVars `servertest_new_SandboxVars.lua`, RCON `127.0.0.1:27015`, logs under `/home/pzserver/Zomboid/Logs`.
 - PZ new-panel UI has responsive navbar and per-server detail tabs: Controls, World Versions, Logs, Config, RCON, Mods, Sandbox.
 - Valheim UI has Controls, Status & Checks, World Versions and Logs; status checks include systemd state, readiness, PID, members and backup versions.
-- Overview UI renders server cards, 24-hour metrics cards, log-health stacked bars and player activity charts from LogAggregates.
+- Overview UI renders host CPU/RAM/disk and per-server process usage; detail view shows selected server usage.
 - World version API/UI verified for route loading; PZ live backup uses RCON save before copying, Valheim live backup is refused while active; rollback is stopped-only with HEAD protection.
 - Latest verification: backend build 0 errors/0 warnings, backend tests 67/67, frontend production build passed; RCON `players`, `servermsg` and `save` returned HTTP 200; frontend JSON body requests include Content-Type to avoid HTTP 415.
-- Source knowledge base: `docs/SOURCE_KNOWLEDGE_BASE.md`; current worktree is intentionally uncommitted pending review and push.
+- Source knowledge base: `docs/SOURCE_KNOWLEDGE_BASE.md`; current worktree contains the resource replacement and LogAggregates removal pending commit.
 
 ===REMAINING_TODO_2026-09-10===
 - Review security and behavior of the new PZ config/Sandbox/Mods write paths before production use.

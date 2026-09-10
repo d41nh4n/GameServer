@@ -28,14 +28,9 @@ Project Zomboid:
 Controls · World Versions · Logs · Config · RCON · Mods · Sandbox
 ```
 
-## Metrics overview
+## Resource usage
 
-The overview loads:
-
-- `GET /api/metrics/global` for current status and 24-hour totals.
-- `GET /api/aggregates?limit=288` for five-minute aggregate windows.
-
-The UI renders log-health stacked bars and player join/leave activity bars without a chart dependency.
+The overview loads `GET /api/resources/overview` and displays host CPU, RAM and disk plus per-server online state, PID, CPU, RSS memory, threads and file descriptors. The same server process snapshot appears at the top of each server detail view.
 
 ## Important client behavior
 

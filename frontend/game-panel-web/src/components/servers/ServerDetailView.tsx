@@ -1,16 +1,17 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AuthProvider } from "../../auth";
 import type { Server } from "../../auth";
 import { Btn, GAME_ICON, STATUS_COLOR, STATUS_LABEL, StatusDot } from "../common";
 import ValheimStatus, { ValheimLogs } from "./ValheimStatus";
 import WorldBackups from "./WorldBackups";
+import ServerResourceDetail from "./ServerResourceDetail";
 
 type DetailTab = "controls" | "status" | "backups" | "logs" | "config" | "rcon" | "mods" | "sandbox";
 
 /* ═══════════ SERVER DETAIL VIEW ═══════════ */
-export default function ServerDetailView({ server, auth, loading, onAction, onBack }: {
-  server: Server; auth: AuthProvider; loading: boolean;
-  onAction: (id: string, type: "start" | "stop") => void;
+export default function ServerDetailView({ server, auth, loading, onAction, onBack, resources }: {
+  server: Server; auth: AuthProvider; loading: boolean; resources?: any;
+  onAction: (id: string, type: "start" | "stop" | "restart") => void;
   onBack: () => void;
 }) {
   const [tab, setTab] = useState<DetailTab>("controls");
@@ -43,6 +44,7 @@ export default function ServerDetailView({ server, auth, loading, onAction, onBa
           <span className="status-text">{STATUS_LABEL[server.status] ?? "Unknown"}</span>
         </div>
       </div>
+      <ServerResourceDetail resource={resources?.servers?.find((x: any) => x.serverId === server.id)} />
 
       <div className="detail-tabs">
         {tabs.map(t => (
@@ -67,7 +69,7 @@ export default function ServerDetailView({ server, auth, loading, onAction, onBa
 }
 
 /* ───── Controls tab ───── */
-function DetailControls({ server, loading, onAction }: { server: Server; loading: boolean; onAction: (id: string, type: "start" | "stop") => void }) {
+function DetailControls({ server, loading, onAction }: { server: Server; loading: boolean; onAction: (id: string, type: "start" | "stop" | "restart") => void }) {
   const isStopped = server.status === 0;
   const isRunning = server.status === 1;
   const isBusy = server.status === 2 || server.status === 3;
@@ -89,6 +91,7 @@ function DetailControls({ server, loading, onAction }: { server: Server; loading
         <h4>Actions</h4>
         <div className="action-btns">
           <Btn variant="primary" disabled={loading || isRunning || isBusy} busy={loading && !isRunning} onClick={() => onAction(server.id, "start")}>▶ Start</Btn>
+          <Btn variant="ghost" disabled={loading || !isRunning || isBusy} onClick={() => onAction(server.id, "restart")}>↻ Restart</Btn>
           <Btn variant="danger" disabled={loading || isStopped || isBusy} busy={loading && isRunning} onClick={() => onAction(server.id, "stop")}>■ Stop</Btn>
         </div>
       </div>
@@ -98,67 +101,20 @@ function DetailControls({ server, loading, onAction }: { server: Server; loading
 
 /* ───── Logs tab ───── */
 function DetailLogs({ server, auth }: { server: Server; auth: AuthProvider }) {
-  const [lines, setLines] = useState(200);
-  const [content, setContent] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [files, setFiles] = useState<{ name: string; size: number; mtime: string }[]>([]);
-  const [selectedFile, setSelectedFile] = useState("");
-  const [fileContent, setFileContent] = useState("");
-  const [mode, setMode] = useState<"journal" | "files">("journal");
-
+  const [lines, setLines] = useState(200); const [content, setContent] = useState(""); const [loading, setLoading] = useState(false);
+  const [files, setFiles] = useState<{ name: string; size: number; mtime: string }[]>([]); const [selectedFile, setSelectedFile] = useState(""); const [fileContent, setFileContent] = useState("");
+  const [mode, setMode] = useState<"journal" | "files">("journal"); const [severity, setSeverity] = useState("all"); const [search, setSearch] = useState(""); const [live, setLive] = useState(false); const inFlight = useRef(false);
   const fetchJournal = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await auth.pzLogs(server.id, lines);
-      setContent(res.content);
-    } catch { setContent("Failed to load logs"); }
-    finally { setLoading(false); }
+    if (inFlight.current) return; inFlight.current = true; setLoading(true);
+    try { const res = await auth.pzLogs(server.id, Math.min(lines, 300)); setContent(res.content); }
+    catch { setContent("Failed to load logs"); } finally { inFlight.current = false; setLoading(false); }
   }, [server.id, lines, auth]);
-
-  const fetchFileList = useCallback(async () => {
-    try { const res = await auth.pzLogsList(); setFiles(res.files ?? []); } catch {}
-  }, [auth]);
-
-  const fetchFile = useCallback(async (name: string) => {
-    setLoading(true); setSelectedFile(name);
-    try { const res = await auth.pzLogRead(name); setFileContent(res.content); }
-    catch { setFileContent("Failed to load file"); }
-    finally { setLoading(false); }
-  }, [auth]);
-
+  const fetchFileList = useCallback(async () => { try { const res = await auth.pzLogsList(); setFiles(res.files ?? []); } catch {} }, [auth]);
+  const fetchFile = useCallback(async (name: string) => { setLoading(true); setSelectedFile(name); try { const res = await auth.pzLogRead(name); setFileContent(res.content); } catch { setFileContent("Failed to load file"); } finally { setLoading(false); } }, [auth]);
   useEffect(() => { if (mode === "journal") fetchJournal(); else fetchFileList(); }, [mode, fetchJournal, fetchFileList]);
-
-  return (
-    <div className="detail-section">
-      <div className="log-mode-tabs">
-        <button className={`log-mode-tab${mode === "journal" ? " active" : ""}`} onClick={() => setMode("journal")}>Journald</button>
-        <button className={`log-mode-tab${mode === "files" ? " active" : ""}`} onClick={() => { setMode("files"); fetchFileList(); }}>Log Files</button>
-      </div>
-      {mode === "journal" ? (
-        <>
-          <div className="log-controls">
-            <label>Lines</label>
-            <input type="number" value={lines} onChange={e => setLines(Number(e.target.value))} min={10} max={1000} className="sm-input" />
-            <Btn variant="ghost" busy={loading} onClick={fetchJournal}>Load</Btn>
-          </div>
-          <pre className="log-viewer">{content || (loading ? "Loading..." : "No logs")}</pre>
-        </>
-      ) : (
-        <div className="log-file-browser">
-          <div className="file-list">
-            {files.map(f => (
-              <div key={f.name} className={`file-item${selectedFile === f.name ? " active" : ""}`} onClick={() => fetchFile(f.name)}>
-                <span className="file-name">{f.name}</span>
-                <span className="file-size">{(f.size / 1024).toFixed(1)} KB</span>
-              </div>
-            ))}
-            {files.length === 0 && <p className="empty-state" style={{ padding: 20 }}>No log files</p>}
-          </div>
-          {selectedFile && <pre className="log-viewer">{fileContent || "Loading..."}</pre>}
-        </div>
-      )}
-    </div>
-  );
+  useEffect(() => { if (!live || mode !== "journal") return; const timer = window.setInterval(() => { void fetchJournal(); }, 5000); return () => window.clearInterval(timer); }, [live, mode, fetchJournal]);
+  const visible = content.split("\n").filter(line => { const l = line.toLowerCase(); return (severity === "all" || (severity === "error" && /\berror\b|\bexception\b|\bfatal\b/i.test(line)) || (severity === "warning" && /\bwarn(?:ing)?\b/i.test(line))) && (!search || l.includes(search.toLowerCase())); }).join("\n");
+  return <div className="detail-section"><div className="log-mode-tabs"><button className={`log-mode-tab${mode === "journal" ? " active" : ""}`} onClick={() => setMode("journal")}>Journald</button><button className={`log-mode-tab${mode === "files" ? " active" : ""}`} onClick={() => { setMode("files"); fetchFileList(); }}>Log Files</button></div>{mode === "journal" ? <><div className="log-controls"><label>Lines</label><input type="number" value={lines} onChange={e => setLines(Math.max(20, Math.min(300, Number(e.target.value))))} min={20} max={300} className="sm-input" /><select value={severity} onChange={e => setSeverity(e.target.value)} className="sm-input"><option value="all">All</option><option value="warning">Warning</option><option value="error">Error/Fatal</option></select><input value={search} onChange={e => setSearch(e.target.value)} placeholder="Filter text..." className="log-filter-input" /><label className="live-toggle"><input type="checkbox" checked={live} onChange={e => setLive(e.target.checked)} /> Auto-refresh 5s</label><Btn variant="ghost" busy={loading} onClick={fetchJournal}>Load</Btn></div><pre className="log-viewer">{visible || (loading ? "Loading..." : "No matching logs")}</pre></> : <div className="log-file-browser"><div className="file-list">{files.map(f => <div key={f.name} className={`file-item${selectedFile === f.name ? " active" : ""}`} onClick={() => fetchFile(f.name)}><span className="file-name">{f.name}</span><span className="file-size">{(f.size / 1024).toFixed(1)} KB</span></div>)}{files.length === 0 && <p className="empty-state" style={{ padding: 20 }}>No log files</p>}</div>{selectedFile && <pre className="log-viewer">{fileContent || "Loading..."}</pre>}</div>}</div>;
 }
 
 /* ───── Config tab ───── */

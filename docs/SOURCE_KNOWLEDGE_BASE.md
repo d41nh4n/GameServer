@@ -24,15 +24,14 @@ ASP.NET Core API :5000
     ├── PZ feature services
     ├── ValheimMonitoringService
     ├── AuditLogService / SystemEventService
-    ├── LogAggregateCollector → LogAggregateService
+    ├── ResourceMetricsService
     └── SQLite gamepanel.db
         ├── ServerInstances
         ├── Users
         ├── AuditLogs
-        ├── SystemEvents
-        └── LogAggregates
+        └── SystemEvents
 
-Raw logs remain in systemd journal/filesystem; SQLite stores bounded facts only.
+Raw logs remain in systemd journal/filesystem; SQLite stores audit and lifecycle facts only.
 ```
 
 ## 3. Backend source map
@@ -53,8 +52,9 @@ Raw logs remain in systemd journal/filesystem; SQLite stores bounded facts only.
 | PZ mods | `PzModService.cs` | WorkshopItems/Mods read/write with backup |
 | PZ operations | `PzOpsService.cs` | Host CPU/memory/disk/process metrics |
 | World versions | `PzWorldBackupService.cs`, `ValheimMonitoringService.cs` | Backup, protected HEAD and stopped-only rollback |
-| Persistence services | `AuditLogService.cs`, `SystemEventService.cs`, `LogAggregateService.cs` | Writes and bounded queries |
-| Metrics | `LogAggregateCollector.cs`, `GlobalMetricsService.cs` | Five-minute windows and 24-hour summary |
+| Persistence services | `AuditLogService.cs`, `SystemEventService.cs` | Writes and bounded queries |
+| Operations | `ServerOperationQueue.cs` | Async Start/Stop/Restart queue, duplicate suppression and background worker |
+| Resources | `ResourceMetricsService.cs` | Host and per-process CPU/RAM/disk/process usage |
 
 ## 4. Frontend source map
 
@@ -68,7 +68,7 @@ frontend/game-panel-web/src/
     ├── auth/LoginPage.tsx          # login form and error state
     └── servers/
         ├── ServerCard.tsx          # server summary card
-        ├── ServerListView.tsx      # overview cards, charts and server grid
+        ├── ServerListView.tsx      # host/per-server resource overview and server grid
         ├── ServerDetailView.tsx    # tab router and shared controls
         ├── ValheimStatus.tsx       # health checks, members and Valheim logs
         ├── WorldBackups.tsx        # PZ/Valheim node timeline and rollback UI
@@ -84,29 +84,21 @@ frontend/game-panel-web/src/
 | Valheim | ✓ | ✓ | ✓ | — | — | — | — | ✓ |
 | Project Zomboid | ✓ | shared status | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 
-The overview dashboard displays live server counts and aggregate charts for log health and player activity. The Metrics Explorer below the charts can query every stored window by server, severity and UTC date range, then shows the persisted counters and last error message.
+The overview displays live host resources and per-server process usage. The selected server detail view repeats its CPU/RAM/thread/file-descriptor snapshot.
 
-## 6. Persistence and metrics flow
+## 6. Resource usage flow
 
 ```text
-systemd journal / game files
-        │ bounded five-minute read
+/proc/stat + /proc/meminfo + /proc/<pid>/status
         ▼
-LogAggregateParser
+ResourceMetricsService
         ▼
-LogAggregates(window, counters, last error)
-        ▼
-GlobalMetricsService
-        ├── GET /api/metrics/global
-        └── GET /api/aggregates
+GET /api/resources/overview
+        ├── host CPU/RAM/disk
+        └── per-server online/PID/CPU/RSS/threads/FDs
 ```
 
-Stored properties:
-
-- `WarningCount`, `ErrorCount`, `FatalCount`
-- `PlayerJoinCount`, `PlayerLeaveCount`
-- `WindowStartUtc`, `WindowEndUtc`
-- bounded `LastErrorMessage`
+Resource snapshots are realtime and are not persisted in SQLite.
 
 Never store raw journal lines, passwords, JWTs, RCON passwords or full config text in SQLite.
 
@@ -122,12 +114,12 @@ Never store raw journal lines, passwords, JWTs, RCON passwords or full config te
 ## 8. API groups
 
 - Auth: `POST /api/auth/login`
-- Lifecycle: `GET /api/servers`, `POST /api/servers/{id}/start|stop`
+- Lifecycle: `GET /api/servers`, `POST /api/servers/{id}/start|stop|restart`, `GET /api/operations/{id}`
 - PZ: `/api/pz/rcon/*`, `/api/pz/config*`, `/api/pz/sandbox/*`, `/api/pz/mods`, `/api/pz/logs/*`, `/api/pz/ops/health`, `/api/pz/backups*`
 - Valheim: `/api/valheim/monitor`, `/api/valheim/logs`, `/api/valheim/members`, `/api/valheim/backups*`
-- Observability: `/api/audit`, `/api/events`, `/api/aggregates`, `/api/metrics/global`
+- Observability: `/api/audit`, `/api/events`, `/api/resources/overview`
 
-Admin authorization is required for mutations. Authenticated users can read status/log/metrics data.
+Admin authorization is required for mutations. Authenticated users can read status, logs and resource data.
 
 ## 9. Verification
 

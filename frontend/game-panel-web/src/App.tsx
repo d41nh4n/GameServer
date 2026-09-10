@@ -16,8 +16,7 @@ export default function App() {
   const [loggedIn, setLoggedIn] = useState(auth.isAuthenticated);
   const [username, setUsername] = useState("");
   const [servers, setServers] = useState<Server[]>([]);
-  const [globalMetrics, setGlobalMetrics] = useState<any>(null);
-  const [aggregates, setAggregates] = useState<any[]>([]);
+  const [resources, setResources] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [connStatus, setConnStatus] = useState<"connecting" | "connected" | "disconnected">("disconnected");
@@ -32,9 +31,9 @@ export default function App() {
     catch (e) { setError(e instanceof ApiError ? e.message : "API Error"); }
   }, [auth]);
 
-  const fetchGlobalMetrics = useCallback(async () => {
-    try { const [summary, points] = await Promise.all([auth.globalMetrics(), auth.aggregates()]); setGlobalMetrics(summary); setAggregates(points); }
-    catch { setGlobalMetrics(null); setAggregates([]); }
+  const fetchResources = useCallback(async () => {
+    try { setResources(await auth.resourcesOverview()); }
+    catch { setResources(null); }
   }, [auth]);
 
   useEffect(() => {
@@ -51,15 +50,26 @@ export default function App() {
       setSelectedServer(prev => prev?.id === id ? { ...prev, status } : prev);
     });
     connection.onclose(() => { if (!disposed) setConnStatus("disconnected"); });
-    start(); fetchServers(); fetchGlobalMetrics();
+    start(); fetchServers(); fetchResources();
     return () => { disposed = true; connection.stop().catch(() => {}); };
-  }, [loggedIn, auth, fetchServers, fetchGlobalMetrics]);
+  }, [loggedIn, auth, fetchServers, fetchResources]);
 
   const doLogin = async (user: string, pass: string) => { setUsername(user); await auth.login(user, pass); };
-  const doLogout = () => { conn?.stop().catch(() => {}); setConn(null); setServers([]); setGlobalMetrics(null); setConnStatus("disconnected"); auth.logout(); };
-  const action = async (id: string, type: "start" | "stop") => {
+  const doLogout = () => { conn?.stop().catch(() => {}); setConn(null); setServers([]); setResources(null); setConnStatus("disconnected"); auth.logout(); };
+  const trackOperation = async (jobId: string) => {
+    for (let i = 0; i < 36; i++) {
+      await new Promise(resolve => window.setTimeout(resolve, 5000));
+      try {
+        const job = await auth.operation(jobId);
+        if (job.status === 2) { await fetchServers(); await fetchResources(); return; }
+        if (job.status === 3) { setError(job.error || "Server operation failed"); await fetchServers(); return; }
+      } catch { return; }
+    }
+    setError("Server operation is still running. Check status and journal logs.");
+  };
+  const action = async (id: string, type: "start" | "stop" | "restart") => {
     setLoading(true); setError("");
-    try { await auth.trigger(id, type); await fetchServers(); await fetchGlobalMetrics(); }
+    try { const job = await auth.trigger(id, type); void trackOperation(job.id); }
     catch (e) { setError(e instanceof ApiError ? e.message : "Action failed"); }
     finally { setLoading(false); }
   };
@@ -67,6 +77,6 @@ export default function App() {
   if (!loggedIn) return <LoginPage onLogin={doLogin} />;
   return <div className="app-layout">
     <nav className="navbar"><div className="nav-left"><span className="nav-brand" onClick={() => { setPage("servers"); setSelectedServer(null); }} style={{ cursor: "pointer" }}>🎮 <span className="nav-brand-text">Game Panel</span></span><div className="nav-links"><button className={`nav-link${page === "servers" ? " active" : ""}`} onClick={() => { setPage("servers"); setSelectedServer(null); }}>📊 Servers</button></div></div><div className="nav-right"><ConnIndicator status={connStatus} /><span className="header-user">{username}</span><Btn variant="ghost" onClick={doLogout}>Logout</Btn></div></nav>
-    <main className="app-main">{error && <div className="error-bar">{error}</div>}{page === "servers" ? <ServerListView servers={servers} error={error} loading={loading} metrics={globalMetrics} aggregates={aggregates} auth={auth} onRefresh={fetchServers} onSelect={s => { setSelectedServer(s); setPage("detail"); }} /> : selectedServer ? <ServerDetailView server={selectedServer} auth={auth} loading={loading} onAction={action} onBack={() => { setPage("servers"); setSelectedServer(null); }} /> : null}</main>
+    <main className="app-main">{error && <div className="error-bar">{error}</div>}{page === "servers" ? <ServerListView servers={servers} error={error} loading={loading} resources={resources} onRefresh={fetchServers} onSelect={s => { setSelectedServer(s); setPage("detail"); }} /> : selectedServer ? <ServerDetailView server={selectedServer} auth={auth} loading={loading} resources={resources} onAction={action} onBack={() => { setPage("servers"); setSelectedServer(null); }} /> : null}</main>
   </div>;
 }

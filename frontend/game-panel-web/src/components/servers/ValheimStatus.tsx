@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { AuthProvider } from "../../auth";
 import { Btn } from "../common";
 
@@ -81,8 +81,9 @@ export default function ValheimStatus({ auth }: { auth: AuthProvider }) {
 }
 
 export function ValheimLogs({ auth }: { auth: AuthProvider }) {
-  const [lines, setLines] = useState(200); const [content, setContent] = useState(""); const [loading, setLoading] = useState(false);
-  const load = useCallback(async () => { setLoading(true); try { const r = await auth.valheimLogs(lines); setContent(r.content ?? ""); } catch { setContent("Failed to load Valheim logs"); } finally { setLoading(false); } }, [auth, lines]);
-  useEffect(() => { load(); }, [load]);
-  return <div className="detail-section"><div className="log-controls"><label>Journal lines</label><input type="number" min={10} max={1000} value={lines} onChange={e => setLines(Number(e.target.value))} className="sm-input" /><Btn variant="ghost" busy={loading} onClick={load}>Load</Btn></div><pre className="log-viewer">{content || (loading ? "Loading..." : "No logs")}</pre></div>;
+  const [lines, setLines] = useState(200); const [content, setContent] = useState(""); const [loading, setLoading] = useState(false); const [severity, setSeverity] = useState("all"); const [search, setSearch] = useState(""); const [live, setLive] = useState(false); const inFlight = useRef(false);
+  const load = useCallback(async () => { if (inFlight.current) return; inFlight.current = true; setLoading(true); try { const r = await auth.valheimLogs(Math.min(lines, 300)); setContent(r.content ?? ""); } catch { setContent("Failed to load Valheim logs"); } finally { inFlight.current = false; setLoading(false); } }, [auth, lines]);
+  useEffect(() => { load(); }, [load]); useEffect(() => { if (!live) return; const timer = window.setInterval(() => { void load(); }, 5000); return () => window.clearInterval(timer); }, [live, load]);
+  const visible = content.split("\n").filter(line => { const l = line.toLowerCase(); return (severity === "all" || (severity === "error" && /\berror\b|\bexception\b|\bfatal\b/i.test(line)) || (severity === "warning" && /\bwarn(?:ing)?\b/i.test(line))) && (!search || l.includes(search.toLowerCase())); }).join("\n");
+  return <div className="detail-section"><div className="log-controls"><label>Journal lines</label><input type="number" min={20} max={300} value={lines} onChange={e => setLines(Math.max(20, Math.min(300, Number(e.target.value))))} className="sm-input" /><select value={severity} onChange={e => setSeverity(e.target.value)} className="sm-input"><option value="all">All</option><option value="warning">Warning</option><option value="error">Error/Fatal</option></select><input value={search} onChange={e => setSearch(e.target.value)} placeholder="Filter text..." className="log-filter-input" /><label className="live-toggle"><input type="checkbox" checked={live} onChange={e => setLive(e.target.checked)} /> Auto-refresh 5s</label><Btn variant="ghost" busy={loading} onClick={load}>Load</Btn></div><pre className="log-viewer">{visible || (loading ? "Loading..." : "No matching logs")}</pre></div>;
 }
