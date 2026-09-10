@@ -20,100 +20,161 @@ public class GameServerManager : IGameServerRuntime
         _hub = hub;
     }
 
-    public async Task<IEnumerable<ServerInstance>> GetAllAsync()
+    public async Task<IEnumerable<ServerInstance>> GetAllAsync(CancellationToken ct = default)
     {
-        var servers = await _db.ServerInstances.OrderBy(x => x.Name).ToListAsync();
-        // Reconcile: nie zgłaszaj Running tylko dlatego, że DB ma stary PID po restarcie.
-        // Źródłem prawdy jest adapter (systemd /proc dla PZ, /proc dla Valheim).
-        foreach (var s in servers)
+        var servers = await _db.ServerInstances.OrderBy(x => x.Name).ToListAsync(ct);
+        var changed = false;
+        foreach (var server in servers)
         {
-            if (s.Status != ServerStatus.Running || s.ProcessId == null)
-            {
-                continue;
-            }
             try
             {
-                if (s.ProcessId is not { } pidInt)
+                var snapshot = await _factory.Create(server).InspectAsync(server);
+                if (snapshot.Status == GameServerStatus.Unknown) continue;
+
+                var previousStatus = server.Status;
+                changed |= ApplySnapshot(server, snapshot);
+                if (server.Status != previousStatus)
                 {
-                    continue;
-                }
-                var adapter = _factory.Create(s);
-                var st = await adapter.GetStatusAsync(pidInt);
-                if (st == GameServerStatus.Stopped)
-                {
-                    s.ProcessId = null;
-                    s.Status = ServerStatus.Stopped;
-                    await _db.SaveChangesAsync();
-                    await _hub.Clients.All.SendAsync("ServerStateChanged", s.Id, (int)ServerStatus.Stopped);
+                    await _hub.Clients.All.SendAsync(
+                        "ServerStateChanged",
+                        server.Id,
+                        (int)server.Status);
                 }
             }
             catch
             {
-                // brak zmian przy tym odczycie — system tymczasowo nieosiągalny
+                // Preserve the last known state when runtime inspection is unavailable.
             }
         }
-        return await _db.ServerInstances.OrderBy(x => x.Name).ToListAsync();
+
+        if (changed) await _db.SaveChangesAsync();
+        return servers;
     }
 
-    public async Task<bool> StartAsync(Guid id)
+    public async Task<bool> StartAsync(Guid id, CancellationToken ct = default)
     {
-        var s = await _db.ServerInstances.FirstOrDefaultAsync(x => x.Id == id);
-        if (s == null || s.Status == ServerStatus.Running) return false;
-
-        s.Status = ServerStatus.Starting;
-        await _db.SaveChangesAsync();
-        await _hub.Clients.All.SendAsync("ServerStateChanged", id, (int)ServerStatus.Starting);
+        var server = await _db.ServerInstances.FirstOrDefaultAsync(x => x.Id == id, ct);
+        if (server == null) return false;
 
         try
         {
-            var adapter = _factory.Create(s);
-            var (ok, pid) = await adapter.StartAsync(s);
-            if (!ok)
+            var adapter = _factory.Create(server);
+            var current = await adapter.InspectAsync(server);
+            if (current.Status == GameServerStatus.Running)
             {
+                ApplySnapshot(server, current);
+                await _db.SaveChangesAsync();
                 return false;
             }
 
-            s.ProcessId = pid;
-            s.Status = ServerStatus.Running;
+            server.Status = ServerStatus.Starting;
+            server.Ready = false;
             await _db.SaveChangesAsync();
-            await _hub.Clients.All.SendAsync("ServerStateChanged", id, (int)ServerStatus.Running);
-            return true;
+            await _hub.Clients.All.SendAsync(
+                "ServerStateChanged",
+                id,
+                (int)ServerStatus.Starting);
+
+            var result = await adapter.StartAsync(server);
+            var fallback = new GameServerRuntimeSnapshot(
+                GameServerStatus.Stopped,
+                null,
+                false);
+            ApplySnapshot(
+                server,
+                result.Snapshot.Status == GameServerStatus.Unknown
+                    ? fallback
+                    : result.Snapshot);
+            await _db.SaveChangesAsync();
+            await _hub.Clients.All.SendAsync(
+                "ServerStateChanged",
+                id,
+                (int)server.Status);
+            return result.Success;
         }
-        catch (Exception)
+        catch
         {
-            s.Status = ServerStatus.Stopped;
+            server.Status = ServerStatus.Stopped;
+            server.ProcessId = null;
+            server.Ready = false;
             await _db.SaveChangesAsync();
-            await _hub.Clients.All.SendAsync("ServerStateChanged", id, (int)ServerStatus.Stopped);
+            await _hub.Clients.All.SendAsync(
+                "ServerStateChanged",
+                id,
+                (int)ServerStatus.Stopped);
             return false;
         }
     }
 
-    public async Task<bool> StopAsync(Guid id)
+    public async Task<bool> StopAsync(Guid id, CancellationToken ct = default)
     {
-        var s = await _db.ServerInstances.FirstOrDefaultAsync(x => x.Id == id);
-        if (s == null || s.Status == ServerStatus.Stopped || s.ProcessId is not { } pid) return false;
-
-        s.Status = ServerStatus.Stopping;
-        await _db.SaveChangesAsync();
-        await _hub.Clients.All.SendAsync("ServerStateChanged", id, (int)ServerStatus.Stopping);
+        var server = await _db.ServerInstances.FirstOrDefaultAsync(x => x.Id == id, ct);
+        if (server == null) return false;
 
         try
         {
-            var adapter = _factory.Create(s);
-            await adapter.StopAsync(pid);
+            var adapter = _factory.Create(server);
+            var current = await adapter.InspectAsync(server);
+            if (current.Status == GameServerStatus.Stopped)
+            {
+                ApplySnapshot(server, current);
+                await _db.SaveChangesAsync();
+                return false;
+            }
 
-            s.ProcessId = null;
-            s.Status = ServerStatus.Stopped;
+            server.Status = ServerStatus.Stopping;
+            server.Ready = false;
             await _db.SaveChangesAsync();
-            await _hub.Clients.All.SendAsync("ServerStateChanged", id, (int)ServerStatus.Stopped);
-            return true;
+            await _hub.Clients.All.SendAsync(
+                "ServerStateChanged",
+                id,
+                (int)ServerStatus.Stopping);
+
+            var result = await adapter.StopAsync(server);
+            ApplySnapshot(
+                server,
+                result.Snapshot.Status == GameServerStatus.Unknown
+                    ? current
+                    : result.Snapshot);
+            await _db.SaveChangesAsync();
+            await _hub.Clients.All.SendAsync(
+                "ServerStateChanged",
+                id,
+                (int)server.Status);
+            return result.Success;
         }
         catch
         {
-            s.Status = ServerStatus.Running;
+            server.Status = ServerStatus.Running;
+            server.Ready = false;
             await _db.SaveChangesAsync();
-            await _hub.Clients.All.SendAsync("ServerStateChanged", id, (int)ServerStatus.Running);
+            await _hub.Clients.All.SendAsync(
+                "ServerStateChanged",
+                id,
+                (int)ServerStatus.Running);
             return false;
         }
+    }
+
+    private static bool ApplySnapshot(
+        ServerInstance server,
+        GameServerRuntimeSnapshot snapshot)
+    {
+        var status = snapshot.Status switch
+        {
+            GameServerStatus.Stopped => ServerStatus.Stopped,
+            GameServerStatus.Starting => ServerStatus.Starting,
+            GameServerStatus.Running => ServerStatus.Running,
+            GameServerStatus.Stopping => ServerStatus.Stopping,
+            _ => server.Status,
+        };
+        var changed =
+            server.Status != status ||
+            server.ProcessId != snapshot.MainPid ||
+            server.Ready != snapshot.Ready;
+        server.Status = status;
+        server.ProcessId = snapshot.MainPid;
+        server.Ready = snapshot.Ready;
+        return changed;
     }
 }

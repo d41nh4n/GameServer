@@ -15,7 +15,11 @@ public record ServerResponse(
     int Type,
     int Status,
     int Port,
-    string WorldName)
+    string WorldName,
+    string? InstanceKey,
+    string ProvisioningMode,
+    string RuntimeType,
+    bool Ready)
 {
     /// <summary>Rzutuje encję domenową na kontrakt API (bez wrażliwych pól).</summary>
     public static ServerResponse FromDomain(ServerInstance s) => new(
@@ -25,5 +29,9 @@ public record ServerResponse(
         (int)s.Type,
         (int)s.Status,
         s.Port,
-        s.WorldName);
+        s.WorldName,
+        s.InstanceKey,
+        s.ProvisioningMode.ToString(),
+        s.RuntimeType.ToString(),
+        s.Ready);
 }

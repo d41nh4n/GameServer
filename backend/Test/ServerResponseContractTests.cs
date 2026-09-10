@@ -23,6 +23,14 @@ public class ServerResponseContractTests
             WorldName = "servertest_new",
             Password = "supersecret-do-not-leak",
             ProcessId = 44566,
+            InstanceKey = "valheim-main",
+            ProvisioningMode = ProvisioningMode.AdoptExisting,
+            RuntimeType = ServerRuntimeType.Systemd,
+            RuntimeId = "valheim-main.service",
+            InstallationPath = "/sensitive/server",
+            DataPath = "/sensitive/data",
+            BackupPath = "/sensitive/backups",
+            Ready = true,
         };
     }
 
@@ -38,6 +46,10 @@ public class ServerResponseContractTests
         Assert.Equal((int)ServerStatus.Running, dto.Status);
         Assert.Equal(16261, dto.Port);
         Assert.Equal("servertest_new", dto.WorldName);
+        Assert.Equal("valheim-main", dto.InstanceKey);
+        Assert.Equal("AdoptExisting", dto.ProvisioningMode);
+        Assert.Equal("Systemd", dto.RuntimeType);
+        Assert.True(dto.Ready);
     }
 
     [Fact]
@@ -52,6 +64,12 @@ public class ServerResponseContractTests
         Assert.DoesNotContain("processid", json);
         Assert.DoesNotContain("supersecret", json);
         Assert.DoesNotContain("44566", json);
+        Assert.DoesNotContain("runtimeid", json);
+        Assert.DoesNotContain("installationpath", json);
+        Assert.DoesNotContain("datapath", json);
+        Assert.DoesNotContain("backuppath", json);
+        Assert.DoesNotContain("invocationid", json);
+        Assert.DoesNotContain("/sensitive/", json);
     }
 
     [Fact]
@@ -79,7 +97,11 @@ public class ServerResponseContractTests
         sb.Append("\"type\":\"").Append(dto.Type).Append("\",");
         sb.Append("\"status\":\"").Append(dto.Status).Append("\",");
         sb.Append("\"port\":").Append(dto.Port).Append(',');
-        sb.Append("\"worldName\":\"").Append(dto.WorldName).Append('"');
+        sb.Append("\"worldName\":\"").Append(dto.WorldName).Append("\",");
+        sb.Append("\"instanceKey\":\"").Append(dto.InstanceKey).Append("\",");
+        sb.Append("\"provisioningMode\":\"").Append(dto.ProvisioningMode).Append("\",");
+        sb.Append("\"runtimeType\":\"").Append(dto.RuntimeType).Append("\",");
+        sb.Append("\"ready\":").Append(dto.Ready ? "true" : "false");
         sb.Append('}');
         return sb.ToString();
     }

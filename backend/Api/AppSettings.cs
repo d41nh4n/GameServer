@@ -19,7 +19,10 @@ public class TailscaleSettings
 public class ValheimSettings
 {
     public const string Section = "GameServers:Valheim";
-    public string ExecutablePath { get; set; } = "";
+    public string ServiceName { get; set; } = "valheim-main.service";
+    public string InstanceKey { get; set; } = "valheim-main";
+    public string ReadinessMarker { get; set; } = "Game server connected";
+    public int BasePort { get; set; } = 2456;
 }
 
 public class ProjectZomboidSettings
@@ -32,6 +35,7 @@ public class ProjectZomboidSettings
     public string DefaultServerName { get; set; } = "servertest_new";
     public string RconHost { get; set; } = "127.0.0.1";
     public int RconPort { get; set; } = 27015;
-    // Sekrety (np. RconPassword) trzymane w env / machine-specific appsettings — nie w źródłach.
+    public string RconPassword { get; set; } = "";
+    // Sekrety trzymane w env / machine-specific appsettings — nie w źródłach.
     public string SudoUser { get; set; } = "";
 }

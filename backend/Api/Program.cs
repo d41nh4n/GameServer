@@ -32,17 +32,63 @@ builder.Services.AddScoped<IAuthService, JwtAuthService>();
 // Persistence & SignalR
 builder.Services.AddDbContext<AppDbContext>(o => o.UseSqlite("Data Source=gamepanel.db"));
 
-// Game server process adapters
+// Game server runtime providers
 builder.Services.AddScoped<GameServerManager>();
 builder.Services.AddScoped<IGameServerRuntime>(sp => sp.GetRequiredService<GameServerManager>());
-builder.Services.AddScoped<ValheimAdapter>();
 builder.Services.AddScoped<ICommandRunner>(_ => new ProcessCommandRunner());
-builder.Services.AddScoped<ProjectZomboidAdapter>(sp =>
+builder.Services.AddScoped<ISystemdRuntimeDriver>(sp =>
 {
+    var config = builder.Configuration;
     var runner = sp.GetRequiredService<ICommandRunner>();
-    return new ProjectZomboidAdapter(runner, builder.Configuration);
+    var valheimService = config["GameServers:Valheim:ServiceName"]
+        ?? "valheim-main.service";
+    var valheimControl = config["GameServers:Valheim:ControlExecutable"]
+        ?? "/usr/bin/systemctl";
+    var valheimSudoUser = config["GameServers:Valheim:SudoUser"] ?? "";
+    var pzService = config["GameServers:ProjectZomboid:ServiceName"]
+        ?? "pzserver-game.service";
+    var pzControl = config["GameServers:ProjectZomboid:ControlExecutable"]
+        ?? "/usr/local/sbin/pz-gamectl";
+    var pzSudoUser = config["GameServers:ProjectZomboid:SudoUser"] ?? "";
+    return new SystemdRuntimeDriver(runner, new[]
+    {
+        new SystemdUnitDefinition(
+            valheimService,
+            valheimControl,
+            true,
+            valheimSudoUser,
+            true),
+        new SystemdUnitDefinition(
+            pzService,
+            pzControl,
+            true,
+            pzSudoUser,
+            true),
+    });
 });
+builder.Services.AddScoped<IValheimRuntimeProbe, ValheimRuntimeProbe>();
+builder.Services.AddScoped<ValheimRuntimeStrategy>();
+builder.Services.AddScoped<ValheimProvider>(sp =>
+    new ValheimProvider(
+        sp.GetRequiredService<ValheimRuntimeStrategy>(),
+        sp.GetRequiredService<ISystemdRuntimeDriver>()));
+builder.Services.AddScoped<IRconClient>(sp =>
+{
+    var config = sp.GetRequiredService<IConfiguration>();
+    return new RconClient(
+        config["GameServers:ProjectZomboid:RconHost"] ?? "127.0.0.1",
+        int.TryParse(config["GameServers:ProjectZomboid:RconPort"], out var port) ? port : 27015,
+        config["GameServers:ProjectZomboid:RconPassword"] ?? "");
+});
+builder.Services.AddScoped<ProjectZomboidAdapter>();
 builder.Services.AddScoped<IGameServerAdapterFactory, GameServerAdapterFactory>();
+
+// PZ extended services
+builder.Services.AddSingleton<PzConfigService>();
+builder.Services.AddSingleton<PzSandboxService>();
+builder.Services.AddSingleton<PzLogService>();
+builder.Services.AddSingleton<PzModService>();
+builder.Services.AddScoped<PzOpsService>();
 
 builder.Services.AddSignalR();
 
@@ -141,6 +187,10 @@ using (var scope = app.Services.CreateScope())
                 Port = 2456,
                 WorldName = "Dedicated",
                 Password = "viking",
+                RuntimeType = ServerRuntimeType.Systemd,
+                ProvisioningMode = ProvisioningMode.AdoptExisting,
+                RuntimeId = "valheim-main.service",
+                ReadinessMarker = "Game server connected",
             },
             new ServerInstance
             {
@@ -163,6 +213,10 @@ using (var scope = app.Services.CreateScope())
                 Port = 16261,
                 WorldName = "servertest_new",
                 Password = "",
+                RuntimeType = ServerRuntimeType.Systemd,
+                ProvisioningMode = ProvisioningMode.AdoptExisting,
+                RuntimeId = "pzserver-game.service",
+                ReadinessMarker = "Server started",
             });
         await db.SaveChangesAsync();
     }
@@ -229,6 +283,159 @@ app.MapPost("/api/servers/{id}/start", async (Guid id, IGameServerRuntime r) =>
 app.MapPost("/api/servers/{id}/stop", async (Guid id, IGameServerRuntime r) =>
     (await r.StopAsync(id)) ? Results.Ok() : Results.BadRequest("Cannot stop"))
     .RequireAuthorization("admin");
+
+app.MapGet("/api/servers/{id}/logs", async (Guid id, int? lines, AppDbContext db, IServiceProvider sp) =>
+{
+    var server = await db.ServerInstances.FirstOrDefaultAsync(x => x.Id == id);
+    if (server == null) return Results.NotFound();
+    if (server.GameType != "ProjectZomboid")
+        return Results.BadRequest("Logs only available for Project Zomboid");
+
+    var adapter = sp.GetRequiredService<ProjectZomboidAdapter>();
+    var content = await adapter.GetLogsAsync(lines ?? 200);
+    return Results.Ok(new { content, lines = lines ?? 200 });
+}).RequireAuthorization("authenticated");
+
+// ─── RCON ───
+
+app.MapPost("/api/pz/rcon/command", async (RconRequest body, IRconClient rcon) =>
+{
+    try
+    {
+        var output = await rcon.SendCommandAsync(body.Command);
+        return Results.Ok(new { success = true, output });
+    }
+    catch (Exception e) { return Results.Problem(e.Message); }
+}).RequireAuthorization("admin");
+
+app.MapPost("/api/pz/rcon/save", async (IRconClient rcon) =>
+{
+    try { return Results.Ok(new { success = true, output = await rcon.SendCommandAsync("save"), message = "World saved" }); }
+    catch (Exception e) { return Results.Problem(e.Message); }
+}).RequireAuthorization("admin");
+
+app.MapPost("/api/pz/rcon/broadcast", async (RconBroadcast body, IRconClient rcon) =>
+{
+    try { return Results.Ok(new { success = true, output = await rcon.SendCommandAsync($"servermsg \"{body.Message}\"") }); }
+    catch (Exception e) { return Results.Problem(e.Message); }
+}).RequireAuthorization("admin");
+
+app.MapPost("/api/pz/rcon/kick", async (RconKick body, IRconClient rcon) =>
+{
+    try { return Results.Ok(new { success = true, output = await rcon.SendCommandAsync($"kickuser \"{body.Username}\" -r \"{body.Reason}\"") }); }
+    catch (Exception e) { return Results.Problem(e.Message); }
+}).RequireAuthorization("admin");
+
+app.MapGet("/api/pz/rcon/players", async (IRconClient rcon) =>
+{
+    try { return Results.Ok(new { success = true, output = await rcon.SendCommandAsync("players") }); }
+    catch (Exception e) { return Results.Problem(e.Message, statusCode: StatusCodes.Status502BadGateway); }
+}).RequireAuthorization("authenticated");
+
+app.MapGet("/api/pz/mods", (PzModService mods) =>
+{
+    try { return Results.Ok(new { success = true, mods = mods.Read() }); }
+    catch (Exception e) { return Results.Problem(e.Message); }
+}).RequireAuthorization("authenticated");
+
+app.MapPut("/api/pz/mods", (PzModUpdateBody body, PzModService mods) =>
+{
+    try
+    {
+        var backup = mods.Update(new PzModUpdate(body.WorkshopIds, body.ModIds));
+        return Results.Ok(new { success = true, backup, mods = mods.Read() });
+    }
+    catch (Exception e) { return Results.Problem(e.Message); }
+}).RequireAuthorization("admin");
+
+// ─── Config INI ───
+
+app.MapGet("/api/pz/config", (PzConfigService cfg) =>
+{
+    try { return Results.Ok(new { success = true, file = cfg.IniPath, config = cfg.Parse() }); }
+    catch (Exception e) { return Results.Problem(e.Message); }
+}).RequireAuthorization("authenticated");
+
+app.MapGet("/api/pz/config/raw", (PzConfigService cfg) =>
+{
+    try { return Results.Ok(new { success = true, file = cfg.IniPath, content = cfg.ReadRaw() }); }
+    catch (Exception e) { return Results.Problem(e.Message); }
+}).RequireAuthorization("authenticated");
+
+app.MapPut("/api/pz/config", (ConfigUpdateBody body, PzConfigService cfg) =>
+{
+    try
+    {
+        var backup = cfg.WriteUpdates(body.Config);
+        return Results.Ok(new { success = true, message = "Config updated", backup, config = cfg.Parse() });
+    }
+    catch (Exception e) { return Results.Problem(e.Message); }
+}).RequireAuthorization("admin");
+
+app.MapPost("/api/pz/config/backup", (PzConfigService cfg) =>
+{
+    try { return Results.Ok(new { success = true, backup = cfg.WriteUpdates(new()) }); }
+    catch (Exception e) { return Results.Problem(e.Message); }
+}).RequireAuthorization("admin");
+
+// ─── SandboxVars Lua ───
+
+app.MapGet("/api/pz/sandbox/config", (PzSandboxService sandbox) =>
+{
+    try
+    {
+        var config = sandbox.GetConfig();
+        var editable = config.Groups.Sum(g => g.Fields.Count(f => f.Editable));
+        var total = config.Groups.Sum(g => g.Fields.Count);
+        return Results.Ok(new { success = true, file = "/home/pzserver/Zomboid/Server/servertest_new_SandboxVars.lua", groups = config.Groups, editable_count = editable, detected_count = total });
+    }
+    catch (Exception e) { return Results.Problem(e.Message); }
+}).RequireAuthorization("authenticated");
+
+app.MapPost("/api/pz/sandbox/save", async (SandboxSaveBody body, PzSandboxService sandbox) =>
+{
+    try
+    {
+        List<string> backups = new();
+        foreach (var change in body.Values)
+        {
+            var backup = sandbox.SaveValue(change.Section, change.Key, change.Value);
+            backups.Add(backup);
+        }
+        var config = sandbox.GetConfig();
+        return Results.Ok(new { success = true, message = "Sandbox settings saved", backups, groups = config.Groups });
+    }
+    catch (Exception e) { return Results.Problem(e.Message); }
+}).RequireAuthorization("admin");
+
+// ─── Logs (filesystem) ───
+
+app.MapGet("/api/pz/logs/list", (PzLogService log) =>
+{
+    try { return Results.Ok(new { success = true, files = log.ListFiles() }); }
+    catch (Exception e) { return Results.Problem(e.Message); }
+}).RequireAuthorization("authenticated");
+
+app.MapGet("/api/pz/logs/read", (string? filename, PzLogService log) =>
+{
+    if (string.IsNullOrEmpty(filename)) return Results.BadRequest(new { success = false, error = "Missing filename" });
+    try { return Results.Ok(new { success = true, filename, content = log.ReadFile(filename) }); }
+    catch (Exception e) { return Results.Problem(e.Message); }
+}).RequireAuthorization("authenticated");
+
+// ─── Ops dashboard ───
+
+app.MapGet("/api/pz/ops/health", async (AppDbContext db, PzOpsService ops) =>
+{
+    try
+    {
+        var pzServer = await db.ServerInstances.FirstOrDefaultAsync(x => x.GameType == "ProjectZomboid");
+        var pid = pzServer?.ProcessId ?? 0;
+        var metrics = await ops.GetMetricsAsync(pid);
+        return Results.Ok(new { success = true, metrics });
+    }
+    catch (Exception e) { return Results.Problem(e.Message); }
+}).RequireAuthorization("authenticated");
 
 app.Run();
 

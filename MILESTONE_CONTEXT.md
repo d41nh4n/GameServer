@@ -4,7 +4,41 @@
 Milestone 4 (Auth & Security) | Status DONE | Date 2026-09-08 | Duration 3 | Lang: MVVM
 CR-00A (API Response Data Exposure) | Status DONE | Commit c1db2ef
 CR-00B (Real Local Authentication) | Status DONE | Commit aa59fb7
-CR-00C (End-to-end JWT protection) | Status IMPLEMENTED (nie commited/nie uruchamiany) | Commit base aa59fb7
+CR-00C (End-to-end JWT protection) | Status DONE | Commit 98c7cf7
+CR-01B (Valheim AdoptExisting + systemd control) | Status IMPLEMENTED | Code + runtime verified
+CR-PZ (Project Zomboid migration + control UI) | Status IMPLEMENTED, awaiting review | Code-only migration; Flask remains active
+
+===CR_01B_DELIVERABLES===
+- [x] Shared allowlisted ISystemdRuntimeDriver/SystemdRuntimeDriver over ICommandRunner; fixed systemctl properties and wrapper control abstraction
+- [x] ValheimProvider -> ValheimRuntimeStrategy -> SystemdRuntimeDriver; status probes plus allowlisted start/stop through systemd
+- [x] Valheim runtime port probe works without root (`ss -lun`); cgroup and journal marker remain readiness checks
+- [x] Runtime snapshot-oriented IGameServerAdapter; manager reconciles AdoptExisting state and preserves truthful state on action failures
+- [x] PZ moved to shared systemd driver with existing wrapper/control behavior retained
+- [x] Additive nullable/default adoption schema + unique InstanceKey and filtered unique RuntimeType/RuntimeId; no data insert/update
+- [x] ServerResponse adds only instanceKey/provisioningMode/runtimeType/ready; sensitive runtime fields remain excluded
+- [x] Fake-only driver/Valheim/PZ/manager/migration/API tests; 67/67 backend suite passed
+
+===CR_PZ_DELIVERABLES===
+- [x] Existing `pzserver-game.service` adopted by the new panel; Flask/gunicorn on :8081 remains running
+- [x] RCON client with Project Zomboid auth-handshake handling; save, players, broadcast, kick, and raw command endpoints
+- [x] PZ stop performs RCON save attempt before systemd stop; systemd SIGINT remains fallback save path
+- [x] INI config read/raw/write/backup service with preserved unrelated lines
+- [x] SandboxVars.lua read/edit/backup service with scalar detection and atomic write
+- [x] Journald logs plus filesystem log listing/read endpoints
+- [x] Ops metrics endpoint for CPU, host memory, disks, and process metrics
+- [x] WorkshopItems/Mods read/update endpoints with backup
+- [x] Responsive UI navbar, server detail pages, Controls, Logs, Config, RCON, Mods, and Sandbox tabs
+- [x] PZ detail page displays runtime user (`pzserver`); player list and Kick action use RCON
+- [x] Migration is code-first; no Flask shutdown, systemd migration, firewall change, or world mutation performed
+
+===CR_01B_LEGACY_DELIVERABLES===
+- [x] Shared allowlisted ISystemdRuntimeDriver/SystemdRuntimeDriver over ICommandRunner; fixed systemctl properties and wrapper control abstraction
+- [x] ValheimProvider -> ValheimRuntimeStrategy -> SystemdRuntimeDriver; read/status only, start/stop fail closed, no direct game Process.Start or env-secret reads
+- [x] Runtime snapshot-oriented IGameServerAdapter; manager reconciles AdoptExisting state and preserves truthful state on action failures
+- [x] PZ moved to shared systemd driver with existing wrapper/control behavior retained
+- [x] Additive nullable/default adoption schema + unique InstanceKey and filtered unique RuntimeType/RuntimeId; no data insert/update
+- [x] ServerResponse adds only instanceKey/provisioningMode/runtimeType/ready; sensitive runtime fields remain excluded
+- [x] Fake-only driver/Valheim/PZ/manager/migration/API tests; 59/59 full backend suite passed; no real systemd, database, or game runtime calls
 
 ===CR_00C_DELIVERABLES===
 - [x] Backend GET /api/servers → RequireAuthorization("authenticated"); start/stop → "admin" (już)
@@ -66,10 +100,10 @@ Auth JWT + Tailscale whitelist (Option A) — HOÀN THÀNH
 - IGameServerAdapter abstraction → nhiều game (Valheim/Minecraft/Zomboid) không đụng Manager/API.
 - GameServerAdapterFactory map enum Type → adapter, tiêm vào GameServerManager (DI, không circular).
 - GameServerManager phụ thuộc AppDbContext + IHubContext<ServerHub> → application push qua SignalR, UI realtime không cần polling GET.
-- ValheimAdapter: Process.Start + ArgumentList thay vì chuỗi shell → tránh injection.
-- Stop kill -15 (graceful); status đọc /proc (PID thật, không cache RAM).
+- ValheimProvider/ValheimRuntimeStrategy dùng shared SystemdRuntimeDriver; không chạy executable trực tiếp.
+- Valheim AdoptExisting hiện read/status-only; start/stop fail-closed cho tới CR privilege-wrapper.
+- Systemd state dùng fixed properties + allowlisted unit; Valheim readiness thêm cgroup, UDP 2456-2457 và marker theo InvocationID.
 - EF MigrateAsync (không EnsureCreatedAsync) → schema versioned.
-- Đường dẫn binary đặt appsettings.json, placeholder {HOME} được ExpandHome() trong ValheimAdapter; không hardcode.
 - Minimal-style endpoints giữ nguyên (không refactor sang Controllers), policy dùng .RequireAuthorization("admin").
 - JWT config đọc từ "Jwt:Secret" (appsettings, không hardcode); nếu "CHANGE_ME" → throw (ép cấu hình trước khi chạy).
 - Middleware Tailscale là tuỳ chọn (Require=false mặc định) để dev local không bị chặn; không đổi binding code, bind 0.0.0.0 khi deploy home-server.
@@ -84,13 +118,20 @@ Auth JWT + Tailscale whitelist (Option A) — HOÀN THÀNH
 - CORS preflight từ origin Tailscale (OPTIONS /start) → 204
 - dotnet build: Build succeeded, 0 Error, 0 Warning
 
-===REMAINING_TODO===
-- cài Valheim binary thật (SteamCMD ~1GB) thay test wrapper → prod
-- Minecraft/Zomboid adapter (chưa có binary)
-- /proc sync khi backend restart (PID còn sót trong DB)
-- token expired → hiện chưa test vì resolve tuỳ middleware (JWt hiện trả 401 khi expired); user yêu cầu 403 → cần tùy chỉnh nếu muốn
-- Bảo mật: GET /api/servers vẫn public; cân nhắc [Authorize] nếu không muốn expose
-- Muốn endpoint chỉ từ Tailscale → bật Tailscale:Require=true (middleware sẵn)
+===CURRENT_STATE_2026-09-10===
+- Backend .NET 10 listens on `http://100.82.102.38:5000` under group context including `pzserver`; frontend Vite listens on `0.0.0.0:5173`.
+- Valheim `valheim-main.service` and PZ `pzserver-game.service` are adopted by the panel; both were tested through API lifecycle controls.
+- Flask PZ web manager remains available at `127.0.0.1:8081` and was verified HTTP 200 after new-panel integration.
+- PZ runtime data: config `servertest_new.ini`, SandboxVars `servertest_new_SandboxVars.lua`, RCON `127.0.0.1:27015`, logs under `/home/pzserver/Zomboid/Logs`.
+- PZ new-panel UI has responsive navbar and per-server detail tabs: Controls, Logs, Config, RCON, Mods, Sandbox.
+- Latest verification: backend build 0 errors/0 warnings, backend tests 67/67, frontend production build passed; RCON `players` returned `Players connected (0)`; Mods endpoint returned 33 Workshop IDs and 33 Mod IDs.
+- Current worktree is intentionally uncommitted pending review and push.
+
+===REMAINING_TODO_2026-09-10===
+- Review security and behavior of the new PZ config/Sandbox/Mods write paths before production use.
+- Add dedicated unit/integration tests for RconClient packet handshake, PzConfigService, PzSandboxService, PzModService, and new API endpoints.
+- Decide production process supervision for the new backend/frontend; current dev listeners are manually started.
+- Do not disable or migrate Flask until explicit cutover approval.
 
 ===NEXT_MILESTONE_OPTIONS===
 - Follow-up CR-PZ: RCON graceful save/broadcast/players (CR-PZ-02), logs+journal streaming (CR-PZ-03), servertest.ini editor (CR-PZ-04), SandboxVars.lua (CR-PZ-05), Workshop/Mods manager (CR-PZ-06), World/Profile manager (CR-PZ-07), health/readiness metrics (CR-PZ-08)
@@ -125,7 +166,7 @@ Auth JWT + Tailscale whitelist (Option A) — HOÀN THÀNH
 - RCONPort=27015 (non-secret; password w servertest_new.ini — NIE commitować)
 
 ===CRITICAL_PATHS===
-- Config binary: appsettings.json "GameServers:Valheim:ExecutablePath" (placeholder {HOME})
+- Config Valheim AdoptExisting: appsettings "GameServers:Valheim" (ServiceName/InstanceKey/ReadinessMarker/BasePort)
 - Test wrapper: backend/scripts/test_valheim_server.sh
 - Auth service: backend/Infrastructure/Auth/JwtAuthService.cs
 - IAuthService: backend/Application/Interfaces/IAuthService.cs

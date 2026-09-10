@@ -2,7 +2,7 @@
 // The JWT lives only in sessionStorage, is restored after refresh, and is never
 // logged or displayed.
 
-const API_BASE = "http://localhost:5000";
+const API_BASE = "http://100.82.102.38:5000";
 const TOKEN_KEY = "gamepanel_access_token";
 
 export type Server = {
@@ -13,6 +13,10 @@ export type Server = {
   status: number;
   port: number;
   worldName: string;
+  instanceKey: string | null;
+  provisioningMode: string;
+  runtimeType: string;
+  ready: boolean;
 };
 
 export class ApiError extends Error {
@@ -134,5 +138,55 @@ export class AuthProvider {
 
   async trigger(id: string, action: "start" | "stop") {
     await this.request<void>(`/api/servers/${id}/${action}`, { method: "POST" });
+  }
+
+  // ─── PZ endpoints ───
+  async pzLogs(id: string, lines = 200): Promise<{ content: string; lines: number }> {
+    return this.request<{ content: string; lines: number }>(`/api/servers/${id}/logs?lines=${lines}`);
+  }
+  async pzHealth(): Promise<any> {
+    return this.request<any>("/api/pz/ops/health");
+  }
+  async pzConfig(): Promise<any> {
+    return this.request<any>("/api/pz/config");
+  }
+  async pzConfigRaw(): Promise<any> {
+    return this.request<any>("/api/pz/config/raw");
+  }
+  async pzConfigUpdate(config: Record<string, Record<string, string>>): Promise<any> {
+    return this.request<any>("/api/pz/config", { method: "PUT", body: JSON.stringify({ config }) });
+  }
+  async pzSandboxConfig(): Promise<any> {
+    return this.request<any>("/api/pz/sandbox/config");
+  }
+  async pzSandboxSave(values: { section: string; key: string; value: any }[]): Promise<any> {
+    return this.request<any>("/api/pz/sandbox/save", { method: "POST", body: JSON.stringify({ values }) });
+  }
+  async pzLogsList(): Promise<any> {
+    return this.request<any>("/api/pz/logs/list");
+  }
+  async pzLogRead(filename: string): Promise<any> {
+    return this.request<any>(`/api/pz/logs/read?filename=${encodeURIComponent(filename)}`);
+  }
+  async pzRconCommand(command: string): Promise<any> {
+    return this.request<any>("/api/pz/rcon/command", { method: "POST", body: JSON.stringify({ command }) });
+  }
+  async pzRconPlayers(): Promise<any> {
+    return this.request<any>("/api/pz/rcon/players");
+  }
+  async pzMods(): Promise<any> {
+    return this.request<any>("/api/pz/mods");
+  }
+  async pzModsUpdate(workshopIds: string[], modIds: string[]): Promise<any> {
+    return this.request<any>("/api/pz/mods", { method: "PUT", body: JSON.stringify({ workshopIds, modIds }) });
+  }
+  async pzRconSave(): Promise<any> {
+    return this.request<any>("/api/pz/rcon/save", { method: "POST" });
+  }
+  async pzRconBroadcast(message: string): Promise<any> {
+    return this.request<any>("/api/pz/rcon/broadcast", { method: "POST", body: JSON.stringify({ message }) });
+  }
+  async pzRconKick(username: string, reason = "Kicked"): Promise<any> {
+    return this.request<any>("/api/pz/rcon/kick", { method: "POST", body: JSON.stringify({ username, reason }) });
   }
 }

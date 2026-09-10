@@ -3,182 +3,152 @@ using GamePanel.Domain.Entities;
 using Microsoft.Extensions.Configuration;
 
 /// <summary>
-/// Adapter dla Project Zomboid zarządzanego przez systemd (pzserver-game.service).
-///
-/// Założenia (sprawdzone na Ubuntu runtime):
-/// - Status odczytujemy z systemctl show (ActiveState/SubState/MainPID) — BEZ sudo.
-/// - Start/Stop/restart przez root-owned wrapper /usr/local/sbin/pz-gamectl
-///   wywoływany przez sudo. Wrapper jest allowlistą — adapter NIGDY nie buduje
-///   dowolnych komend shell, tylko stałe argumenty sterujące.
-/// - Jeden właściciel cyklu życia: systemd. Nie tworzymy drugiego procesu PZ.
-/// - MainPID z systemd jest źródłem prawdy dla /proc — naprawia to TODO
-///   o "stale ProcessId po restarcie backendu".
+/// Systemd-backed Project Zomboid adapter with RCON save-then-stop and logs.
+/// Uses pz-gamectl wrapper for start/stop (via sudoers) and reads systemd for
+/// status. RCON is only used pre-stop to broadcast + save the world.
 /// </summary>
 public class ProjectZomboidAdapter : IGameServerAdapter
 {
-    private readonly ICommandRunner _runner;
+    private readonly ISystemdRuntimeDriver _driver;
+    private readonly IRconClient _rcon;
     private readonly string _serviceName;
-    private readonly string _controlExecutable;
-    private readonly string _sudoUser;
-    private readonly bool _useSudo;
 
     public ProjectZomboidAdapter(
-        ICommandRunner runner,
-        IConfiguration config)
+        ISystemdRuntimeDriver driver,
+        IConfiguration config,
+        IRconClient rcon)
     {
-        _runner = runner;
+        _driver = driver;
+        _rcon = rcon;
         var serviceName = config["GameServers:ProjectZomboid:ServiceName"];
-        var controlExecutable = config["GameServers:ProjectZomboid:ControlExecutable"];
-        var sudoUser = config["GameServers:ProjectZomboid:SudoUser"];
-        _serviceName = string.IsNullOrWhiteSpace(serviceName) ? "pzserver-game.service" : serviceName;
-        _controlExecutable = string.IsNullOrWhiteSpace(controlExecutable) ? "/usr/local/sbin/pz-gamectl" : controlExecutable;
-        _sudoUser = sudoUser ?? "";
-        _useSudo = true;
-    }
-
-    // ---- building blocks (wszystko przez ArgumentList, bez shell) ----
-
-    private List<string> ControlArgv(string subcommand)
-    {
-        var argv = new List<string>();
-        if (_useSudo)
-        {
-            argv.Add("/usr/bin/sudo");
-            argv.Add("-n");
-            if (!string.IsNullOrWhiteSpace(_sudoUser))
-            {
-                argv.Add("-u");
-                argv.Add(_sudoUser);
-            }
-        }
-        argv.Add(_controlExecutable);
-        argv.Add(subcommand);
-        return argv;
-    }
-
-    private List<string> SystemctlShowArgv(string property)
-    {
-        return new List<string>
-        {
-            "/usr/bin/systemctl",
-            "show",
-            _serviceName,
-            "--property=" + property,
-            "--value",
-        };
-    }
-
-    private string LastLine(string s)
-    {
-        var trimmed = s.Trim();
-        var eol = trimmed.LastIndexOf("\n");
-        return eol < 0 ? trimmed : trimmed.Substring(eol + 1);
+        _serviceName = string.IsNullOrWhiteSpace(serviceName)
+            ? "pzserver-game.service"
+            : serviceName;
     }
 
     // ---- IGameServerAdapter ----
 
-    public async Task<(bool Success, int Pid)> StartAsync(ServerInstance instance, CancellationToken ct = default)
+    public async Task<GameServerActionResult> StartAsync(
+        ServerInstance instance,
+        CancellationToken ct = default)
     {
-        // Uruchamiamy przez istniejący systemd lifecycle (ExecStartPre → preflight → ProjectZomboid64).
-        var res = await _runner.RunAsync(ControlArgv("start"), ct);
-        if (!res.Succeeded)
+        if (!await _driver.ControlAsync(
+                _serviceName,
+                SystemdControlAction.Start,
+                ct))
         {
-            return (false, 0);
+            return new(false, await InspectAsync(instance, ct));
         }
 
-        // Odczytaj rzeczywisty MainPID z systemd (źródło prawdy). Type=simple zgłasza
-        // active zanim PZ wstanie — czekamy bounded (max 150s) aż MainPID się pojawi.
-        // Nie czekamy na RCON-readiness (to osobny follow-up CR-PZ-08).
         var deadline = DateTime.UtcNow.AddSeconds(150);
-        var mainPid = 0;
-        while (DateTime.UtcNow < deadline && mainPid <= 0)
+        GameServerRuntimeSnapshot snapshot;
+        do
         {
-            mainPid = await ReadMainPidAsync(ct);
-            if (mainPid <= 0)
-            {
-                await Task.Delay(1000, ct);
-            }
-        }
-        if (mainPid <= 0)
-        {
-            return (false, 0);
-        }
-        return (true, mainPid);
-    }
-
-    public async Task<bool> StopAsync(int pid, CancellationToken ct = default)
-    {
-        // Graczowałby graceful shutdown: systemd KillSignal=SIGINT (KILLS worker gry).
-        // Wrapper pz-gamectl stop używa kontrolowanego zatrzymania usługi.
-        var res = await _runner.RunAsync(ControlArgv("stop"), ct);
-
-        // Poczekaj (ograniczony czas) aż service zgaśnie — to naprawia stale-PID.
-        var deadline = DateTime.UtcNow.AddSeconds(24);
-        while (DateTime.UtcNow < deadline && await IsActiveAsync(ct))
-        {
+            snapshot = await InspectAsync(instance, ct);
+            if (snapshot.Status == GameServerStatus.Running) break;
             await Task.Delay(1000, ct);
         }
+        while (DateTime.UtcNow < deadline);
 
-        return res.Succeeded;
+        return new(
+            snapshot.Status == GameServerStatus.Running,
+            snapshot);
     }
 
-    public async Task<GameServerStatus> GetStatusAsync(int pid, CancellationToken ct = default)
+    public async Task<GameServerActionResult> StopAsync(
+        ServerInstance instance,
+        CancellationToken ct = default)
     {
-        var active = await IsActiveAsync(ct);
-        if (!active)
+        // 1. Broadcast shutdown message, save via RCON
+        try
         {
-            return GameServerStatus.Stopped;
+            await _rcon.SendCommandAsync(
+                @"servermsg ""Server is shutting down for maintenance...""", ct);
+            await _rcon.SendCommandAsync("save", ct);
+            await Task.Delay(3000, ct); // give time to flush
+        }
+        catch
+        {
+            // RCON unavailable — fall through to systemd stop (SIGINT handles save).
         }
 
-        // Dodatkowo potwierdź przez /proc, że MainPID naprawdę żyje.
-        var mainPid = await ReadMainPidAsync(ct);
-        if (mainPid <= 0)
+        // 2. systemd stop (SIGINT → PZ saves then exits per unit configuration)
+        var controlSucceeded = await _driver.ControlAsync(
+            _serviceName,
+            SystemdControlAction.Stop,
+            ct);
+        if (!controlSucceeded)
         {
-            return GameServerStatus.Stopped;
+            return new(false, await InspectAsync(instance, ct));
         }
-        return Directory.Exists($"/proc/{mainPid}") ? GameServerStatus.Running : GameServerStatus.Stopped;
+
+        // 3. Poll until stopped
+        var deadline = DateTime.UtcNow.AddSeconds(24);
+        GameServerRuntimeSnapshot snapshot;
+        do
+        {
+            snapshot = await InspectAsync(instance, ct);
+            if (snapshot.Status == GameServerStatus.Stopped) break;
+            await Task.Delay(1000, ct);
+        }
+        while (DateTime.UtcNow < deadline);
+
+        return new(controlSucceeded, snapshot);
     }
 
-    // ---- helpers ----
-
-    private async Task<bool> IsActiveAsync(CancellationToken ct)
+    public async Task<GameServerRuntimeSnapshot> InspectAsync(
+        ServerInstance instance,
+        CancellationToken ct = default)
     {
-        var r = await _runner.RunAsync(SystemctlShowArgv("ActiveState"), ct);
-        return r.Succeeded && LastLine(r.StdOut).Trim() == "active";
+        var state = await _driver.GetStateAsync(_serviceName, ct);
+        if (!state.QuerySucceeded)
+        {
+            return new(GameServerStatus.Unknown, instance.ProcessId, false);
+        }
+        var isRunning =
+            state.QuerySucceeded &&
+            state.ActiveState == "active" &&
+            state.MainPid > 0 &&
+            Directory.Exists($"/proc/{state.MainPid}");
+        if (!isRunning)
+        {
+            return new(GameServerStatus.Stopped, null, false);
+        }
+        return new(GameServerStatus.Running, state.MainPid, true);
     }
 
-    private async Task<int> ReadMainPidAsync(CancellationToken ct)
+    // ---- Extended: logs ----
+
+    public async Task<string> GetLogsAsync(int lines = 200, CancellationToken ct = default)
     {
-        var r = await _runner.RunAsync(SystemctlShowArgv("MainPID"), ct);
-        if (!r.Succeeded)
-        {
-            return 0;
-        }
-        var line = LastLine(r.StdOut).Trim();
-        if (line == "0")
-        {
-            return 0;
-        }
-        return TryParseInt(line);
+        lines = Math.Max(1, Math.Min(lines, 1000));
+        var result = await RunSystemctlAsync(
+            _serviceName,
+            "logs",
+            lines.ToString(),
+            ct);
+        return result;
     }
 
-    private static int TryParseInt(string s)
+    private static async Task<string> RunSystemctlAsync(
+        string unitName,
+        string subcommand,
+        string arg,
+        CancellationToken ct)
     {
-        var result = 0;
-        var started = false;
-        foreach (var c in s)
+        var psi = new System.Diagnostics.ProcessStartInfo
         {
-            if (c < '0' || c > '9')
-            {
-                return 0;
-            }
-            if (result > (2147483647 - (c - '0')) / 10)
-            {
-                return 0;
-            }
-            result = result * 10 + (c - '0');
-            started = true;
-        }
-        return started ? result : 0;
+            FileName = "/usr/bin/sudo",
+            ArgumentList = { "-n", "/usr/local/sbin/pz-gamectl", subcommand, arg },
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        using var proc = System.Diagnostics.Process.Start(psi);
+        if (proc == null) return "";
+
+        var stdout = await proc.StandardOutput.ReadToEndAsync(ct);
+        await proc.WaitForExitAsync(ct);
+        return stdout;
     }
 }

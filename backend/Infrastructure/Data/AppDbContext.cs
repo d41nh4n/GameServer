@@ -21,6 +21,23 @@ public class AppDbContext : DbContext
             e.Property(x => x.Status).HasConversion<int>();
             e.Property(x => x.WorldName).HasMaxLength(120);
             e.Property(x => x.Password).HasMaxLength(100);
+            e.Property(x => x.InstanceKey).HasMaxLength(100);
+            e.Property(x => x.ProvisioningMode).HasConversion<int>();
+            e.Property(x => x.RuntimeType).HasConversion<int>();
+            e.Property(x => x.RuntimeId).HasMaxLength(200);
+            e.Property(x => x.InstallationPath).HasMaxLength(500);
+            e.Property(x => x.DataPath).HasMaxLength(500);
+            e.Property(x => x.BackupPath).HasMaxLength(500);
+            e.Property(x => x.Protocol).HasConversion<int>();
+            e.Property(x => x.ReadinessMarker).HasMaxLength(200);
+            e.HasIndex(x => x.InstanceKey)
+                .IsUnique()
+                .HasFilter("\"InstanceKey\" IS NOT NULL")
+                .HasDatabaseName("UX_ServerInstances_InstanceKey");
+            e.HasIndex(x => new { x.RuntimeType, x.RuntimeId })
+                .IsUnique()
+                .HasFilter("\"RuntimeId\" IS NOT NULL")
+                .HasDatabaseName("UX_ServerInstances_RuntimeType_RuntimeId");
         });
 
         modelBuilder.Entity<User>(e =>

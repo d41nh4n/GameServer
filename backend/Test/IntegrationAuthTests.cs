@@ -138,12 +138,43 @@ public class IntegrationAuthTests : IDisposable
     [Fact]
     public async Task Admin_Get_Servers_Returns200_NoSensitiveFields()
     {
+        _runtime.Servers = new[]
+        {
+            new ServerInstance
+            {
+                Id = Guid.NewGuid(),
+                Name = "Valheim Main",
+                GameType = "Valheim",
+                Type = GameServerType.Valheim,
+                Password = "must-not-leak",
+                ProcessId = 4242,
+                InstanceKey = "valheim-main",
+                ProvisioningMode = ProvisioningMode.AdoptExisting,
+                RuntimeType = ServerRuntimeType.Systemd,
+                RuntimeId = "valheim-main.service",
+                InstallationPath = "/sensitive/server",
+                DataPath = "/sensitive/data",
+                BackupPath = "/sensitive/backups",
+                Ready = true,
+            },
+        };
         var admin = await LoginAdmin();
         var (status, body) = await Send("GET", "/api/servers", null, admin, null);
         Assert.Equal(HttpStatusCode.OK, status);
-        var text = Str(body);
-        Assert.DoesNotContain("password", text.ToLower());
-        Assert.DoesNotContain("processid", text.ToLower());
+        var text = Str(body).ToLowerInvariant();
+        Assert.Contains("instancekey", text);
+        Assert.Contains("provisioningmode", text);
+        Assert.Contains("runtimetype", text);
+        Assert.Contains("ready", text);
+        Assert.DoesNotContain("password", text);
+        Assert.DoesNotContain("processid", text);
+        Assert.DoesNotContain("runtimeid", text);
+        Assert.DoesNotContain("installationpath", text);
+        Assert.DoesNotContain("datapath", text);
+        Assert.DoesNotContain("backuppath", text);
+        Assert.DoesNotContain("invocationid", text);
+        Assert.DoesNotContain("must-not-leak", text);
+        Assert.DoesNotContain("/sensitive/", text);
     }
 
     [Fact]

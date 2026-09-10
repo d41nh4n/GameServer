@@ -20,9 +20,9 @@ public class FakeGameRuntime : IGameServerRuntime
     public bool StopResult = true;
     public IEnumerable<ServerInstance> Servers = new List<ServerInstance>();
 
-    public Task<IEnumerable<ServerInstance>> GetAllAsync() { GetCallCount++; return Task.FromResult(Servers); }
-    public Task<bool> StartAsync(Guid id) { StartCallCount++; return Task.FromResult(StartResult); }
-    public Task<bool> StopAsync(Guid id) { StopCallCount++; return Task.FromResult(StopResult); }
+    public Task<IEnumerable<ServerInstance>> GetAllAsync(CancellationToken ct = default) { GetCallCount++; return Task.FromResult(Servers); }
+    public Task<bool> StartAsync(Guid id, CancellationToken ct = default) { StartCallCount++; return Task.FromResult(StartResult); }
+    public Task<bool> StopAsync(Guid id, CancellationToken ct = default) { StopCallCount++; return Task.FromResult(StopResult); }
 }
 
 /// <summary>No-op command runner — nigdy nie wywołuje Process/systemctl/sudo.</summary>

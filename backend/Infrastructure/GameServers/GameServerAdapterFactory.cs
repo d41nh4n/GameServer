@@ -14,8 +14,8 @@ public class GameServerAdapterFactory : IGameServerAdapterFactory
 
     public IGameServerAdapter Create(ServerInstance instance) => instance.Type switch
     {
-        GameServerType.Valheim => _services.GetService(typeof(ValheimAdapter)) as IGameServerAdapter
-            ?? throw new InvalidOperationException("ValheimAdapter not registered"),
+        GameServerType.Valheim => _services.GetService(typeof(ValheimProvider)) as IGameServerAdapter
+            ?? throw new InvalidOperationException("ValheimProvider not registered"),
         GameServerType.ProjectZomboid => _services.GetService(typeof(ProjectZomboidAdapter)) as IGameServerAdapter
             ?? throw new InvalidOperationException("ProjectZomboidAdapter not registered"),
         _ => throw new NotSupportedException($"No adapter registered for game type '{instance.Type}'"),

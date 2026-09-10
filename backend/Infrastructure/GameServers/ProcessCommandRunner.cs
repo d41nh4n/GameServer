@@ -32,24 +32,42 @@ public class ProcessCommandRunner : ICommandRunner
         try
         {
             proc = Process.Start(psi);
-            if (proc is { } p)
+            if (proc is not { } process)
             {
-                p.WaitForExit(300000);
-                exitCode = p.ExitCode;
-                if (p.StandardOutput is { } so)
+                return new CommandResult
                 {
-                    stdout.AppendLine(so.ReadToEnd());
-                }
-                if (p.StandardError is { } se)
-                {
-                    stderr.AppendLine(se.ReadToEnd());
-                }
+                    ExitCode = -1,
+                    StdErr = "Process failed to start",
+                };
             }
+
+            var stdoutTask = process.StandardOutput.ReadToEndAsync(ct);
+            var stderrTask = process.StandardError.ReadToEndAsync(ct);
+            await process.WaitForExitAsync(ct);
+            stdout.AppendLine(await stdoutTask);
+            stderr.AppendLine(await stderrTask);
+            exitCode = process.ExitCode;
+        }
+        catch (OperationCanceledException)
+        {
+            try
+            {
+                if (proc is { HasExited: false }) proc.Kill(entireProcessTree: true);
+            }
+            catch
+            {
+                // Best effort: cancellation must still propagate to the caller.
+            }
+            throw;
         }
         catch (Exception e)
         {
             stderr.AppendLine(e.Message);
             exitCode = -1;
+        }
+        finally
+        {
+            proc?.Dispose();
         }
 
         return new CommandResult { ExitCode = exitCode, StdOut = stdout.ToString(), StdErr = stderr.ToString() };
