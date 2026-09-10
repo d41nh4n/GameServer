@@ -3,6 +3,7 @@ using System;
 using GamePanel.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -10,9 +11,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace GamePanel.Infrastructure.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260910071107_AddAuditLogs")]
+    partial class AddAuditLogs
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.11");
@@ -60,50 +63,6 @@ namespace GamePanel.Infrastructure.Migrations
                     b.HasIndex("ServerInstanceId", "CreatedAtUtc");
 
                     b.ToTable("AuditLogs", (string)null);
-                });
-
-            modelBuilder.Entity("GamePanel.Domain.Entities.LogAggregate", b =>
-                {
-                    b.Property<long>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<int>("ErrorCount")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<int>("FatalCount")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("LastErrorMessage")
-                        .HasMaxLength(255)
-                        .HasColumnType("TEXT");
-
-                    b.Property<int>("PlayerJoinCount")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<int>("PlayerLeaveCount")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<Guid>("ServerInstanceId")
-                        .HasColumnType("TEXT");
-
-                    b.Property<int>("WarningCount")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<DateTime>("WindowEndUtc")
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTime>("WindowStartUtc")
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("WindowStartUtc");
-
-                    b.HasIndex("ServerInstanceId", "WindowStartUtc")
-                        .IsUnique();
-
-                    b.ToTable("LogAggregates", (string)null);
                 });
 
             modelBuilder.Entity("GamePanel.Domain.Entities.ServerInstance", b =>
@@ -196,51 +155,6 @@ namespace GamePanel.Infrastructure.Migrations
                         .HasFilter("\"RuntimeId\" IS NOT NULL");
 
                     b.ToTable("ServerInstances", (string)null);
-                });
-
-            modelBuilder.Entity("GamePanel.Domain.Entities.SystemEvent", b =>
-                {
-                    b.Property<long>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .HasColumnType("TEXT");
-
-                    b.Property<int?>("CurrentStatus")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("EventType")
-                        .IsRequired()
-                        .HasMaxLength(80)
-                        .HasColumnType("TEXT");
-
-                    b.Property<int?>("MainPid")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("Message")
-                        .IsRequired()
-                        .HasMaxLength(255)
-                        .HasColumnType("TEXT");
-
-                    b.Property<int?>("PreviousStatus")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<Guid>("ServerInstanceId")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Severity")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("CreatedAtUtc");
-
-                    b.HasIndex("ServerInstanceId", "CreatedAtUtc");
-
-                    b.ToTable("SystemEvents", (string)null);
                 });
 
             modelBuilder.Entity("GamePanel.Domain.Entities.User", b =>

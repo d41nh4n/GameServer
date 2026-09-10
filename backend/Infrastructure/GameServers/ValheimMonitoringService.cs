@@ -1,0 +1,187 @@
+namespace GamePanel.Infrastructure.GameServers;
+using System.Diagnostics;
+using System.Text.RegularExpressions;
+
+/// <summary>Read-only monitoring and safe versioned backup for an adopted Valheim instance.</summary>
+public sealed class ValheimMonitoringService
+{
+    private readonly ISystemdRuntimeDriver _driver;
+    private const string DataRoot = "/srv/gamepanel/instances/valheim-main/data";
+    private const string WorldRoot = DataRoot + "/worlds_local";
+    private const string BackupRoot = "/home/nh4n/backups/game-server-panel/valheim";
+    private const string Unit = "valheim-main.service";
+
+    public ValheimMonitoringService(ISystemdRuntimeDriver driver) => _driver = driver;
+
+    public async Task<ValheimMonitorSnapshot> GetSnapshotAsync(CancellationToken ct = default)
+    {
+        var state = await _driver.GetStateAsync(Unit, ct);
+        var members = ReadMembers();
+        var backups = ListBackups();
+        return new ValheimMonitorSnapshot
+        {
+            ActiveState = state.ActiveState,
+            SubState = state.SubState,
+            MainPid = state.MainPid > 0 ? state.MainPid : null,
+            InvocationId = state.InvocationId,
+            Ready = state.IsRunning,
+            Members = members,
+            Backups = backups,
+            WorldPath = WorldRoot,
+        };
+    }
+
+    public async Task<string> GetLogsAsync(int lines = 200, CancellationToken ct = default)
+    {
+        lines = Math.Clamp(lines, 1, 1000);
+        var psi = new ProcessStartInfo
+        {
+            FileName = "/usr/bin/journalctl",
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        psi.ArgumentList.Add("-u"); psi.ArgumentList.Add(Unit);
+        psi.ArgumentList.Add("-n"); psi.ArgumentList.Add(lines.ToString());
+        psi.ArgumentList.Add("--no-pager"); psi.ArgumentList.Add("-o"); psi.ArgumentList.Add("short-iso");
+        using var process = Process.Start(psi) ?? throw new InvalidOperationException("Cannot start journalctl");
+        var output = await process.StandardOutput.ReadToEndAsync(ct);
+        await process.WaitForExitAsync(ct);
+        if (process.ExitCode != 0) throw new InvalidOperationException("journalctl failed");
+        return output;
+    }
+
+    public List<ValheimMember> ReadMembers()
+    {
+        return [
+            .. ReadMemberFile("adminlist.txt", "Admin"),
+            .. ReadMemberFile("permittedlist.txt", "Permitted"),
+            .. ReadMemberFile("bannedlist.txt", "Banned"),
+        ];
+    }
+
+    public void AddMember(string id, string role)
+    {
+        var file = RoleFile(role);
+        ValidateId(id);
+        var path = Path.Combine(DataRoot, file);
+        BackupFile(path);
+        var entries = File.Exists(path) ? File.ReadAllLines(path).Select(x => x.Trim()).Where(x => x.Length > 0).ToHashSet() : new();
+        entries.Add(id);
+        File.WriteAllLines(path, entries.Order(StringComparer.Ordinal));
+    }
+
+    public void RemoveMember(string id, string role)
+    {
+        var file = RoleFile(role);
+        ValidateId(id);
+        var path = Path.Combine(DataRoot, file);
+        if (!File.Exists(path)) return;
+        BackupFile(path);
+        File.WriteAllLines(path, File.ReadAllLines(path).Where(x => x.Trim() != id));
+    }
+
+    /// <summary>Creates a versioned world backup only while the service is inactive.</summary>
+    public async Task<ValheimBackup> CreateBackupAsync(CancellationToken ct = default)
+    {
+        var state = await _driver.GetStateAsync(Unit, ct);
+        if (state.ActiveState == "active")
+            throw new InvalidOperationException("Stop Valheim before creating a consistent world backup");
+        if (!Directory.Exists(WorldRoot)) throw new DirectoryNotFoundException(WorldRoot);
+
+        Directory.CreateDirectory(BackupRoot);
+        var name = $"world-{DateTime.UtcNow:yyyyMMdd-HHmmss}";
+        var destination = Path.Combine(BackupRoot, name);
+        CopyDirectory(WorldRoot, destination);
+        var info = new DirectoryInfo(destination);
+        return new ValheimBackup { Name = name, Path = destination, CreatedAt = info.CreationTimeUtc, SizeBytes = DirectorySize(info) };
+    }
+
+    public async Task<ValheimBackup> RollbackAsync(string version, CancellationToken ct = default)
+    {
+        ValidateVersion(version);
+        var state = await _driver.GetStateAsync(Unit, ct);
+        if (state.ActiveState == "active") throw new InvalidOperationException("Stop Valheim before rollback");
+        var source = Path.Combine(BackupRoot, version);
+        if (!Directory.Exists(source)) throw new DirectoryNotFoundException(source);
+        var head = await CreateBackupAsync(ct);
+        var staging = WorldRoot + ".rollback-staging";
+        if (Directory.Exists(staging)) Directory.Delete(staging, true);
+        CopyDirectory(source, staging);
+        if (Directory.Exists(WorldRoot)) Directory.Delete(WorldRoot, true);
+        Directory.Move(staging, WorldRoot);
+        return head;
+    }
+
+    private static void ValidateVersion(string version)
+    {
+        if (string.IsNullOrWhiteSpace(version) || version != Path.GetFileName(version) || version.Contains(".."))
+            throw new ArgumentException("Invalid backup version", nameof(version));
+    }
+
+    public List<ValheimBackup> ListBackups()
+    {
+        if (!Directory.Exists(BackupRoot)) return [];
+        return Directory.GetDirectories(BackupRoot)
+            .Select(path =>
+            {
+                var info = new DirectoryInfo(path);
+                return new ValheimBackup { Name = info.Name, Path = path, CreatedAt = info.CreationTimeUtc, SizeBytes = DirectorySize(info) };
+            })
+            .OrderByDescending(x => x.CreatedAt).ToList();
+    }
+
+    private static string RoleFile(string role) => role switch
+    {
+        "Admin" => "adminlist.txt",
+        "Permitted" => "permittedlist.txt",
+        "Banned" => "bannedlist.txt",
+        _ => throw new ArgumentException("Role must be Admin, Permitted or Banned", nameof(role)),
+    };
+
+    private static void ValidateId(string id)
+    {
+        if (string.IsNullOrWhiteSpace(id) || id.Length > 64 || id.Any(char.IsWhiteSpace) || id.Any(c => c is '/' or '\\'))
+            throw new ArgumentException("Invalid Valheim member ID", nameof(id));
+    }
+
+    private static void BackupFile(string path)
+    {
+        if (!File.Exists(path)) return;
+        Directory.CreateDirectory(BackupRoot);
+        File.Copy(path, Path.Combine(BackupRoot, $"{Path.GetFileName(path)}.{DateTime.UtcNow:yyyyMMdd-HHmmss}.bak"));
+    }
+
+    private static List<ValheimMember> ReadMemberFile(string file, string role)
+    {
+        var path = Path.Combine(DataRoot, file);
+        if (!File.Exists(path)) return [];
+        return File.ReadLines(path)
+            .Select(x => x.Trim()).Where(x => x.Length > 0 && !x.StartsWith('#') && !x.StartsWith("//", StringComparison.Ordinal))
+            .Select(id => new ValheimMember { Id = id, Role = role, Source = file }).ToList();
+    }
+
+    private static void CopyDirectory(string source, string destination)
+    {
+        Directory.CreateDirectory(destination);
+        foreach (var file in Directory.GetFiles(source)) File.Copy(file, Path.Combine(destination, Path.GetFileName(file)));
+        foreach (var directory in Directory.GetDirectories(source)) CopyDirectory(directory, Path.Combine(destination, Path.GetFileName(directory)));
+    }
+
+    private static long DirectorySize(DirectoryInfo directory) =>
+        directory.EnumerateFiles("*", SearchOption.AllDirectories).Sum(x => x.Length);
+}
+
+public sealed record ValheimMonitorSnapshot
+{
+    public string ActiveState { get; init; } = "unknown";
+    public string SubState { get; init; } = "unknown";
+    public int? MainPid { get; init; }
+    public string InvocationId { get; init; } = "";
+    public bool Ready { get; init; }
+    public string WorldPath { get; init; } = "";
+    public List<ValheimMember> Members { get; init; } = [];
+    public List<ValheimBackup> Backups { get; init; } = [];
+}
+public sealed record ValheimMember { public string Id { get; init; } = ""; public string Role { get; init; } = ""; public string Source { get; init; } = ""; }
+public sealed record ValheimBackup { public string Name { get; init; } = ""; public string Path { get; init; } = ""; public DateTime CreatedAt { get; init; } public long SizeBytes { get; init; } }

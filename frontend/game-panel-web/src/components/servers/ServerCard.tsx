@@ -1,0 +1,7 @@
+import type { Server } from "../../auth";
+import { GAME_ICON, STATUS_LABEL, StatusDot } from "../common";
+
+export default function ServerCard({ server, onClick }: { server: Server; onClick: () => void }) {
+  const icon = GAME_ICON[server.gameType] ?? GAME_ICON.default;
+  return <div className="server-card" onClick={onClick} style={{ cursor: "pointer" }}><div className="card-header"><span className="game-icon">{icon}</span><div className="card-title"><h3>{server.name}</h3><span className="game-type">{server.gameType}</span></div><div className="card-status"><StatusDot status={server.status} /><span className="status-text">{STATUS_LABEL[server.status] ?? "Unknown"}</span></div></div><div className="card-meta"><div className="meta-item"><span className="meta-label">World</span><span className="meta-value">{server.worldName || "—"}</span></div><div className="meta-item"><span className="meta-label">Port</span><span className="meta-value">{server.port}</span></div>{server.provisioningMode === "AdoptExisting" && <div className="meta-item"><span className="meta-label">Type</span><span className="meta-value">{server.runtimeType === "Systemd" ? "Systemd" : "Process"}</span></div>}<div className="meta-item"><span className="meta-label">Ready</span><span className={`meta-value ${server.ready ? "ready" : "not-ready"}`}>{server.ready ? "Yes" : "No"}</span></div></div><div className="card-click-hint">Click to manage →</div></div>;
+}

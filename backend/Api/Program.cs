@@ -12,6 +12,7 @@ using GamePanel.Infrastructure.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Http.Connections;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Primitives;
@@ -89,6 +90,14 @@ builder.Services.AddSingleton<PzSandboxService>();
 builder.Services.AddSingleton<PzLogService>();
 builder.Services.AddSingleton<PzModService>();
 builder.Services.AddScoped<PzOpsService>();
+builder.Services.AddScoped<PzWorldBackupService>();
+builder.Services.AddScoped<ValheimMonitoringService>();
+builder.Services.AddScoped<AuditLogService>();
+builder.Services.AddScoped<SystemEventService>();
+builder.Services.AddScoped<LogAggregateService>();
+builder.Services.AddScoped<GlobalMetricsService>();
+if (builder.Configuration.GetValue("Metrics:EnableLogAggregateCollector", false))
+    builder.Services.AddHostedService<LogAggregateCollector>();
 
 builder.Services.AddSignalR();
 
@@ -180,7 +189,7 @@ using (var scope = app.Services.CreateScope())
             new ServerInstance
             {
                 Id = Guid.Parse("11111111-1111-1111-1111-111111111111"),
-                Name = "Valheim Demo Server",
+                Name = "Valheim Main Server",
                 GameType = "Valheim",
                 Type = GameServerType.Valheim,
                 Status = ServerStatus.Stopped,
@@ -206,7 +215,7 @@ using (var scope = app.Services.CreateScope())
             new ServerInstance
             {
                 Id = Guid.Parse("33333333-3333-3333-3333-333333333333"),
-                Name = "Project Zomboid Server",
+                Name = "Project Zomboid Main Server",
                 GameType = "ProjectZomboid",
                 Type = GameServerType.ProjectZomboid,
                 Status = ServerStatus.Stopped,
@@ -276,13 +285,19 @@ var loginRoute = app.MapPost("/api/auth/login", async (LoginRequest body, IAuthS
     return Results.Ok(new LoginResponse(token.Value, token.ExpiresAt));
 }).RequireRateLimiting("login");
 
-app.MapPost("/api/servers/{id}/start", async (Guid id, IGameServerRuntime r) =>
-    (await r.StartAsync(id)) ? Results.Ok() : Results.BadRequest("Cannot start"))
-    .RequireAuthorization("admin");
+app.MapPost("/api/servers/{id}/start", async (Guid id, IGameServerRuntime r, AuditLogService audit, HttpContext http) =>
+{
+    var success = await r.StartAsync(id);
+    await audit.RecordAsync(http.User, AuditActions.StartServer, id, success, success ? "OK" : "START_FAILED", new { action = "start" });
+    return success ? Results.Ok() : Results.BadRequest("Cannot start");
+}).RequireAuthorization("admin");
 
-app.MapPost("/api/servers/{id}/stop", async (Guid id, IGameServerRuntime r) =>
-    (await r.StopAsync(id)) ? Results.Ok() : Results.BadRequest("Cannot stop"))
-    .RequireAuthorization("admin");
+app.MapPost("/api/servers/{id}/stop", async (Guid id, IGameServerRuntime r, AuditLogService audit, HttpContext http) =>
+{
+    var success = await r.StopAsync(id);
+    await audit.RecordAsync(http.User, AuditActions.StopServer, id, success, success ? "OK" : "STOP_FAILED", new { action = "stop" });
+    return success ? Results.Ok() : Results.BadRequest("Cannot stop");
+}).RequireAuthorization("admin");
 
 app.MapGet("/api/servers/{id}/logs", async (Guid id, int? lines, AppDbContext db, IServiceProvider sp) =>
 {
@@ -434,6 +449,95 @@ app.MapGet("/api/pz/ops/health", async (AppDbContext db, PzOpsService ops) =>
         var metrics = await ops.GetMetricsAsync(pid);
         return Results.Ok(new { success = true, metrics });
     }
+    catch (Exception e) { return Results.Problem(e.Message); }
+}).RequireAuthorization("authenticated");
+
+app.MapGet("/api/valheim/monitor", async (ValheimMonitoringService monitoring) =>
+{
+    try { return Results.Ok(new { success = true, monitor = await monitoring.GetSnapshotAsync() }); }
+    catch (Exception e) { return Results.Problem(e.Message); }
+}).RequireAuthorization("authenticated");
+
+app.MapGet("/api/valheim/logs", async (int? lines, ValheimMonitoringService monitoring) =>
+{
+    try { return Results.Ok(new { success = true, content = await monitoring.GetLogsAsync(lines ?? 200), lines = Math.Clamp(lines ?? 200, 1, 1000) }); }
+    catch (Exception e) { return Results.Problem(e.Message); }
+}).RequireAuthorization("authenticated");
+
+app.MapGet("/api/valheim/members", (ValheimMonitoringService monitoring) =>
+    Results.Ok(new { success = true, members = monitoring.ReadMembers() }))
+    .RequireAuthorization("authenticated");
+
+app.MapPost("/api/valheim/members", ([FromBody] ValheimMemberChange body, ValheimMonitoringService monitoring) =>
+{
+    try { monitoring.AddMember(body.Id, body.Role); return Results.Ok(new { success = true, members = monitoring.ReadMembers() }); }
+    catch (ArgumentException e) { return Results.BadRequest(new { success = false, error = e.Message }); }
+}).RequireAuthorization("admin");
+
+app.MapDelete("/api/valheim/members", ([FromBody] ValheimMemberChange body, ValheimMonitoringService monitoring) =>
+{
+    try { monitoring.RemoveMember(body.Id, body.Role); return Results.Ok(new { success = true, members = monitoring.ReadMembers() }); }
+    catch (ArgumentException e) { return Results.BadRequest(new { success = false, error = e.Message }); }
+}).RequireAuthorization("admin");
+
+app.MapGet("/api/valheim/backups", (ValheimMonitoringService monitoring) =>
+    Results.Ok(new { success = true, backups = monitoring.ListBackups() }))
+    .RequireAuthorization("authenticated");
+
+app.MapPost("/api/valheim/backups", async (ValheimMonitoringService monitoring) =>
+{
+    try { return Results.Ok(new { success = true, backup = await monitoring.CreateBackupAsync() }); }
+    catch (InvalidOperationException e) { return Results.Conflict(new { success = false, error = e.Message }); }
+    catch (Exception e) { return Results.Problem(e.Message); }
+}).RequireAuthorization("admin");
+
+app.MapPost("/api/valheim/backups/{version}/rollback", async (string version, ValheimMonitoringService monitoring, CancellationToken ct) =>
+{
+    try { return Results.Ok(new { success = true, headBackup = await monitoring.RollbackAsync(version, ct) }); }
+    catch (InvalidOperationException e) { return Results.Conflict(new { success = false, error = e.Message }); }
+    catch (Exception e) { return Results.BadRequest(new { success = false, error = e.Message }); }
+}).RequireAuthorization("admin");
+
+app.MapGet("/api/pz/backups", (PzWorldBackupService backups) =>
+    Results.Ok(new { success = true, backups = backups.List() }))
+    .RequireAuthorization("authenticated");
+
+app.MapPost("/api/pz/backups", async (PzWorldBackupService backups, CancellationToken ct) =>
+{
+    try { return Results.Ok(new { success = true, backup = await backups.CreateAsync(ct) }); }
+    catch (Exception e) { return Results.Conflict(new { success = false, error = e.Message }); }
+}).RequireAuthorization("admin");
+
+app.MapPost("/api/pz/backups/{version}/rollback", async (string version, PzWorldBackupService backups, CancellationToken ct) =>
+{
+    try { return Results.Ok(new { success = true, headBackup = await backups.RollbackAsync(version, ct) }); }
+    catch (InvalidOperationException e) { return Results.Conflict(new { success = false, error = e.Message }); }
+    catch (Exception e) { return Results.BadRequest(new { success = false, error = e.Message }); }
+}).RequireAuthorization("admin");
+
+app.MapGet("/api/audit", async (Guid? serverId, int? limit, AppDbContext db) =>
+{
+    var take = Math.Clamp(limit ?? 100, 1, 500);
+    var query = db.AuditLogs.AsNoTracking().OrderByDescending(x => x.CreatedAtUtc).AsQueryable();
+    if (serverId.HasValue) query = query.Where(x => x.ServerInstanceId == serverId.Value).OrderByDescending(x => x.CreatedAtUtc);
+    return Results.Ok(await query.Take(take).ToListAsync());
+}).RequireAuthorization("admin");
+
+app.MapGet("/api/events", async (Guid? serverId, int? limit, SystemEventService events) =>
+{
+    var take = Math.Clamp(limit ?? 100, 1, 500);
+    return Results.Ok(await events.Query(serverId).Take(take).ToListAsync());
+}).RequireAuthorization("authenticated");
+
+app.MapGet("/api/aggregates", async (Guid? serverId, DateTime? fromUtc, DateTime? toUtc, int? limit, LogAggregateService aggregates) =>
+{
+    var take = Math.Clamp(limit ?? 100, 1, 1000);
+    return Results.Ok(await aggregates.Query(serverId, fromUtc, toUtc).Take(take).ToListAsync());
+}).RequireAuthorization("authenticated");
+
+app.MapGet("/api/metrics/global", async (GlobalMetricsService metrics, CancellationToken ct) =>
+{
+    try { return Results.Ok(await metrics.GetAsync(ct)); }
     catch (Exception e) { return Results.Problem(e.Message); }
 }).RequireAuthorization("authenticated");
 

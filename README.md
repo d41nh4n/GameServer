@@ -1,68 +1,68 @@
 # Game Server Panel
 
-Control panel for Valheim and Project Zomboid, built with ASP.NET Core 10 and React/Vite.
+Control panel for adopted **Valheim** and **Project Zomboid** services, built with ASP.NET Core 10, EF Core/SQLite and React/Vite.
 
 ## Current status
 
-- Valheim: adopted `valheim-main.service` with status probes and systemd controls.
-- Project Zomboid: adopted `pzserver-game.service`; Flask manager remains active as fallback.
-- PZ features: controls, save-before-stop, RCON, players/kick, journald/filesystem logs, INI config, SandboxVars, Workshop/Mods, and host/process metrics.
-- Frontend: responsive dark gaming UI with server detail tabs.
-- Latest verification: backend build 0 errors/0 warnings, 67/67 backend tests, frontend production build passed.
+- Valheim: `valheim-main.service`, systemd adoption, readiness checks, status, members, logs, backups and safe rollback.
+- Project Zomboid: `pzserver-game.service`, systemd adoption, save-before-stop, RCON, players/kick, logs, config, SandboxVars, mods, operations metrics, backups and safe rollback.
+- Flask PZ manager remains active on `127.0.0.1:8081` as fallback.
+- Authenticated API with JWT, admin-only mutations, SignalR status updates and optional Tailscale filtering.
+- Observability: AuditLogs, SystemEvents, five-minute LogAggregates and global metrics dashboard.
+- Responsive dark UI with server overview charts and per-server feature tabs.
+
+Detailed source/feature documentation: [`docs/SOURCE_KNOWLEDGE_BASE.md`](docs/SOURCE_KNOWLEDGE_BASE.md).
 
 ## Ports
 
-- Backend API: `http://localhost:5000` or `http://100.82.102.38:5000`
-- Frontend React: `http://localhost:5173` or `http://100.82.102.38:5173`
-- Legacy Flask PZ manager: `127.0.0.1:8081` behind the existing nginx configuration
+- API: `http://localhost:5000` or `http://100.82.102.38:5000`
+- React/Vite: `http://localhost:5173` or `http://100.82.102.38:5173`
+- Legacy Flask PZ manager: `127.0.0.1:8081` behind existing nginx
 
-## Development
+## Build and test
 
 ```bash
 export PATH="$HOME/.dotnet:$PATH"
 export DOTNET_ROOT="$HOME/.dotnet"
 
 cd backend
- dotnet build
- dotnet test
+dotnet build
+dotnet test
 
 cd ../frontend/game-panel-web
 npm run build
 ```
 
-Run the backend:
+## Development listeners
 
 ```bash
 cd backend/Api
 dotnet run --urls=http://localhost:5000
-```
 
-Run the frontend:
-
-```bash
 cd frontend/game-panel-web
 npm run dev -- --host 0.0.0.0
 ```
 
-For a laptop over SSH:
+For remote access, bind the API to the host Tailscale address and run the frontend on `0.0.0.0:5173`. The frontend API base is configured in `src/auth.ts`.
 
-```bash
-ssh -L 5173:localhost:5173 -L 5000:localhost:5000 nh4n@myserver
-```
+## API areas
 
-## PZ API areas
-
-- `/api/servers/{id}/start` and `/stop`
-- `/api/servers/{id}/logs`
+- `/api/auth/login`
+- `/api/servers/{id}/start|stop`
 - `/api/pz/rcon/*`
 - `/api/pz/config*`
 - `/api/pz/sandbox/*`
 - `/api/pz/mods`
 - `/api/pz/logs/*`
 - `/api/pz/ops/health`
+- `/api/pz/backups*`
+- `/api/valheim/monitor`, `/api/valheim/logs`, `/api/valheim/members`, `/api/valheim/backups*`
+- `/api/audit`, `/api/events`, `/api/aggregates`, `/api/metrics/global`
 
-## Safety and migration rule
+## Safety rules
 
-The legacy Flask manager and PZ systemd service must remain available during migration. Do not stop Flask, mutate the live world, change firewall rules, or perform a final cutover without explicit approval.
-
-Machine-specific `appsettings.json`/`appsettings.Development.json`, JWT secrets, RCON passwords, and SQLite runtime files must not be committed.
+- Do not stop Flask, mutate a live world, change firewall rules or perform final cutover without explicit approval.
+- PZ live backup sends RCON `save` before copying the world and does not restart the service.
+- Valheim backup requires an inactive service because no consistent live snapshot/RCON path is enabled.
+- Rollback requires an inactive service and creates a protected backup of the current HEAD before replacement.
+- Do not commit machine-specific `appsettings.json`, JWT secrets, RCON passwords or SQLite runtime files.

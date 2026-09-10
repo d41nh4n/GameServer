@@ -104,6 +104,9 @@ export class AuthProvider {
   // Shared client: attaches Bearer and clears authentication on HTTP 401.
   private async request<T>(path: string, init?: RequestInit): Promise<T> {
     const headers = new Headers(init?.headers ?? {});
+    if (init?.body && !headers.has("Content-Type")) {
+      headers.set("Content-Type", "application/json");
+    }
     if (this.token) {
       headers.set("Authorization", `Bearer ${this.token}`);
     }
@@ -188,5 +191,24 @@ export class AuthProvider {
   }
   async pzRconKick(username: string, reason = "Kicked"): Promise<any> {
     return this.request<any>("/api/pz/rcon/kick", { method: "POST", body: JSON.stringify({ username, reason }) });
+  }
+  async valheimMonitor(): Promise<any> { return this.request<any>("/api/valheim/monitor"); }
+  async valheimLogs(lines = 200): Promise<any> { return this.request<any>(`/api/valheim/logs?lines=${lines}`); }
+  async valheimMembers(): Promise<any> { return this.request<any>("/api/valheim/members"); }
+  async valheimMemberAdd(id: string, role: string): Promise<any> { return this.request<any>("/api/valheim/members", { method: "POST", body: JSON.stringify({ id, role }) }); }
+  async valheimMemberRemove(id: string, role: string): Promise<any> { return this.request<any>("/api/valheim/members", { method: "DELETE", body: JSON.stringify({ id, role }) }); }
+  async valheimBackups(): Promise<any> { return this.request<any>("/api/valheim/backups"); }
+  async valheimCreateBackup(): Promise<any> { return this.request<any>("/api/valheim/backups", { method: "POST" }); }
+  async valheimRollback(version: string): Promise<any> { return this.request<any>(`/api/valheim/backups/${encodeURIComponent(version)}/rollback`, { method: "POST" }); }
+  async pzBackups(): Promise<any> { return this.request<any>("/api/pz/backups"); }
+  async pzCreateBackup(): Promise<any> { return this.request<any>("/api/pz/backups", { method: "POST" }); }
+  async pzRollback(version: string): Promise<any> { return this.request<any>(`/api/pz/backups/${encodeURIComponent(version)}/rollback`, { method: "POST" }); }
+  async globalMetrics(): Promise<any> { return this.request<any>("/api/metrics/global"); }
+  async aggregates(options: { limit?: number; serverId?: string; fromUtc?: string; toUtc?: string } = {}): Promise<any[]> {
+    const params = new URLSearchParams({ limit: String(options.limit ?? 288) });
+    if (options.serverId) params.set("serverId", options.serverId);
+    if (options.fromUtc) params.set("fromUtc", options.fromUtc);
+    if (options.toUtc) params.set("toUtc", options.toUtc);
+    return this.request<any[]>(`/api/aggregates?${params}`);
   }
 }

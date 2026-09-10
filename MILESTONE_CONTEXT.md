@@ -118,14 +118,84 @@ Auth JWT + Tailscale whitelist (Option A) — HOÀN THÀNH
 - CORS preflight từ origin Tailscale (OPTIONS /start) → 204
 - dotnet build: Build succeeded, 0 Error, 0 Warning
 
+===CR_VALHEIM_MONITORING_DELIVERABLES===
+- [x] Valheim monitor snapshot: systemd state, MainPID, InvocationID, readiness, members and backup versions
+- [x] Valheim journal logs endpoint with bounded line count
+- [x] Valheim member management: read/add/remove Admin, Permitted and Banned lists; file backup before writes; role/ID validation
+- [x] Safe world backup endpoint: refuses while service is active to avoid copying an inconsistent live world; stores versions outside the game data directory
+- [x] Responsive Valheim UI tabs: Logs, Members and World Backups
+- [x] Live verification: `active=true`, `ready=true`, 3 member entries, 0 existing panel backups
+
+===PHASE_1_AUDIT_LOGS===
+- [x] AuditLogs entity + EF model: CreatedAtUtc, UserId, UsernameSnapshot, ServerInstanceId, Action, IsSuccess, ResultCode, MetadataJson
+- [x] Metadata secret guard blocks password/token/secret/JWT fields
+- [x] Start/Stop endpoints record admin actions and result codes
+- [x] Admin read endpoint: `GET /api/audit` with server filter and bounded limit
+- [x] Migration applied after external SQLite backup: `AddAuditLogs`, `AddSystemEvents`, `AddLogAggregates`
+
+===PHASE_2_SYSTEM_EVENTS===
+- [x] SystemEvents entity + EF model: CreatedAtUtc, ServerInstanceId, EventType, status transition, MainPid, Message, Severity
+- [x] Runtime state transitions recorded by GameServerManager during discovery/start/stop
+- [x] Authenticated timeline endpoint: `GET /api/events` with server filter and bounded limit
+- [x] Migration applied after external SQLite backup: `AddSystemEvents`
+
+===PHASE_3_LOG_AGGREGATES===
+- [x] LogAggregates entity + EF model: window, warning/error/fatal counts, player join/leave counts, last error
+- [x] Parser separates aggregate counters from raw log text; raw logs remain in journal/filesystem
+- [x] Upsert service with unique `(ServerInstanceId, WindowStartUtc)` window key
+- [x] Authenticated query endpoint: `GET /api/aggregates` with server/time filters and bounded limit
+- [x] Migration applied after external SQLite backup: `AddLogAggregates`
+
+===PHASE_4_LOG_AGGREGATE_COLLECTOR===
+- [x] BackgroundService aligns to configurable UTC windows (default 5 minutes)
+- [x] Reads bounded systemd journal windows for adopted systemd servers
+- [x] Parses counters and upserts LogAggregates; never stores raw journal text
+- [x] Collector enabled in current production `appsettings.json`; feature flag remains false in example template
+- [x] Interval configurable via `Metrics:LogAggregateIntervalMinutes`
+
+===PHASE_5_GLOBAL_METRICS===
+- [x] GlobalMetricsService aggregates server status and 24h LogAggregate counters
+- [x] Authenticated endpoint: `GET /api/metrics/global`
+- [x] Responsive server overview metrics strip: Running, Ready, Stopped, Errors 24h, Fatal 24h
+- [x] Metrics gracefully hide when production migrations are not yet applied
+
+===PHASE_5_GLOBAL_METRICS===
+- [x] GlobalMetricsService aggregates server status and 24h LogAggregate counters
+- [x] Authenticated endpoint: `GET /api/metrics/global`
+- [x] Authenticated endpoint: `GET /api/aggregates?limit=...`
+- [x] Responsive overview cards and SVG/CSS charts for log health and player activity
+- [x] Metrics Explorer table shows every stored aggregate window with server, UTC window, warning/error/fatal, joins/leaves and last error
+- [x] Metrics Explorer filters by server, severity and UTC date range through `/api/aggregates`
+- [x] Chart properties documented in `docs/SOURCE_KNOWLEDGE_BASE.md`
+
+===PHASE_6_WORLD_VERSIONS===
+- [x] PZ live backup: RCON `save`, short settle delay, then world copy without restart/stop
+- [x] Valheim backup refuses active service because no consistent live snapshot/RCON path exists
+- [x] Versioned backup roots remain outside live game data
+- [x] Rollback requires stopped service and creates protected `HEAD-before-rollback` first
+- [x] Rollback validates version names and uses staging replacement
+- [x] PZ/Valheim World Versions UI uses node timeline and confirmation before rollback
+- [x] API routes documented in source knowledge base
+
+===PHASE_7_UI_REFACTOR_AND_KNOWLEDGE_BASE===
+- [x] `App.tsx` reduced to orchestration: auth, SignalR, navigation and lifecycle actions
+- [x] Feature components separated under `frontend/game-panel-web/src/components/`
+- [x] Valheim Status & Checks tab exposes runtime, readiness, PID, members and world state
+- [x] Shared JSON client sets `Content-Type: application/json` to prevent HTTP 415 body-binding failures
+- [x] `docs/SOURCE_KNOWLEDGE_BASE.md` documents architecture, source map, API groups, UI matrix, metrics and safety rules
+- [x] Root README and frontend README updated for current implementation
+
 ===CURRENT_STATE_2026-09-10===
 - Backend .NET 10 listens on `http://100.82.102.38:5000` under group context including `pzserver`; frontend Vite listens on `0.0.0.0:5173`.
 - Valheim `valheim-main.service` and PZ `pzserver-game.service` are adopted by the panel; both were tested through API lifecycle controls.
 - Flask PZ web manager remains available at `127.0.0.1:8081` and was verified HTTP 200 after new-panel integration.
 - PZ runtime data: config `servertest_new.ini`, SandboxVars `servertest_new_SandboxVars.lua`, RCON `127.0.0.1:27015`, logs under `/home/pzserver/Zomboid/Logs`.
-- PZ new-panel UI has responsive navbar and per-server detail tabs: Controls, Logs, Config, RCON, Mods, Sandbox.
-- Latest verification: backend build 0 errors/0 warnings, backend tests 67/67, frontend production build passed; RCON `players` returned `Players connected (0)`; Mods endpoint returned 33 Workshop IDs and 33 Mod IDs.
-- Current worktree is intentionally uncommitted pending review and push.
+- PZ new-panel UI has responsive navbar and per-server detail tabs: Controls, World Versions, Logs, Config, RCON, Mods, Sandbox.
+- Valheim UI has Controls, Status & Checks, World Versions and Logs; status checks include systemd state, readiness, PID, members and backup versions.
+- Overview UI renders server cards, 24-hour metrics cards, log-health stacked bars and player activity charts from LogAggregates.
+- World version API/UI verified for route loading; PZ live backup uses RCON save before copying, Valheim live backup is refused while active; rollback is stopped-only with HEAD protection.
+- Latest verification: backend build 0 errors/0 warnings, backend tests 67/67, frontend production build passed; RCON `players`, `servermsg` and `save` returned HTTP 200; frontend JSON body requests include Content-Type to avoid HTTP 415.
+- Source knowledge base: `docs/SOURCE_KNOWLEDGE_BASE.md`; current worktree is intentionally uncommitted pending review and push.
 
 ===REMAINING_TODO_2026-09-10===
 - Review security and behavior of the new PZ config/Sandbox/Mods write paths before production use.

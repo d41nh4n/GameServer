@@ -12,12 +12,19 @@ public class GameServerManager : IGameServerRuntime
     private readonly AppDbContext _db;
     private readonly IGameServerAdapterFactory _factory;
     private readonly IHubContext<ServerHub> _hub;
+    private readonly SystemEventService _events;
 
     public GameServerManager(AppDbContext db, IGameServerAdapterFactory factory, IHubContext<ServerHub> hub)
+        : this(db, factory, hub, new SystemEventService(db))
+    {
+    }
+
+    public GameServerManager(AppDbContext db, IGameServerAdapterFactory factory, IHubContext<ServerHub> hub, SystemEventService events)
     {
         _db = db;
         _factory = factory;
         _hub = hub;
+        _events = events;
     }
 
     public async Task<IEnumerable<ServerInstance>> GetAllAsync(CancellationToken ct = default)
@@ -39,6 +46,15 @@ public class GameServerManager : IGameServerRuntime
                         "ServerStateChanged",
                         server.Id,
                         (int)server.Status);
+                    await _events.RecordAsync(
+                        server.Id,
+                        SystemEventTypes.StateChanged,
+                        ServerStatusSeverity(server.Status),
+                        $"Server state changed from {previousStatus} to {server.Status}",
+                        previousStatus,
+                        server.Status,
+                        server.ProcessId,
+                        ct);
                 }
             }
             catch
@@ -64,9 +80,10 @@ public class GameServerManager : IGameServerRuntime
             {
                 ApplySnapshot(server, current);
                 await _db.SaveChangesAsync();
-                return false;
+                return true;
             }
 
+            var previousStatus = server.Status;
             server.Status = ServerStatus.Starting;
             server.Ready = false;
             await _db.SaveChangesAsync();
@@ -74,6 +91,8 @@ public class GameServerManager : IGameServerRuntime
                 "ServerStateChanged",
                 id,
                 (int)ServerStatus.Starting);
+            await _events.RecordAsync(id, SystemEventTypes.StateChanged, SystemEventSeverity.Info,
+                "Start requested", previousStatus, ServerStatus.Starting, server.ProcessId, ct);
 
             var result = await adapter.StartAsync(server);
             var fallback = new GameServerRuntimeSnapshot(
@@ -90,6 +109,8 @@ public class GameServerManager : IGameServerRuntime
                 "ServerStateChanged",
                 id,
                 (int)server.Status);
+            await _events.RecordAsync(id, SystemEventTypes.StateChanged, ServerStatusSeverity(server.Status),
+                $"Start completed with state {server.Status}", ServerStatus.Starting, server.Status, server.ProcessId, ct);
             return result.Success;
         }
         catch
@@ -119,9 +140,10 @@ public class GameServerManager : IGameServerRuntime
             {
                 ApplySnapshot(server, current);
                 await _db.SaveChangesAsync();
-                return false;
+                return true;
             }
 
+            var previousStatus = server.Status;
             server.Status = ServerStatus.Stopping;
             server.Ready = false;
             await _db.SaveChangesAsync();
@@ -129,6 +151,8 @@ public class GameServerManager : IGameServerRuntime
                 "ServerStateChanged",
                 id,
                 (int)ServerStatus.Stopping);
+            await _events.RecordAsync(id, SystemEventTypes.StateChanged, SystemEventSeverity.Info,
+                "Stop requested", previousStatus, ServerStatus.Stopping, server.ProcessId, ct);
 
             var result = await adapter.StopAsync(server);
             ApplySnapshot(
@@ -141,6 +165,8 @@ public class GameServerManager : IGameServerRuntime
                 "ServerStateChanged",
                 id,
                 (int)server.Status);
+            await _events.RecordAsync(id, SystemEventTypes.StateChanged, ServerStatusSeverity(server.Status),
+                $"Stop completed with state {server.Status}", ServerStatus.Stopping, server.Status, server.ProcessId, ct);
             return result.Success;
         }
         catch
@@ -155,6 +181,11 @@ public class GameServerManager : IGameServerRuntime
             return false;
         }
     }
+
+    private static string ServerStatusSeverity(ServerStatus status) =>
+        status is ServerStatus.Stopped or ServerStatus.Running
+            ? SystemEventSeverity.Info
+            : SystemEventSeverity.Warning;
 
     private static bool ApplySnapshot(
         ServerInstance server,

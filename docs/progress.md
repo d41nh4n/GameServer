@@ -1,37 +1,44 @@
 # Progress
 
-## Milestone 1 — CRUD/API + React
-- Environment checked, solution initialized, In-Memory Fake Runtime, React Dashboard
-- Verified end-to-end (GET + start/stop state machine + CORS + dashboard)
+## Current implementation status — 2026-09-10
 
-## Milestone 2 — SQLite & SignalR (HOÀN THÀNH)
-- Cleanup rác M1, SQLite (AppDbContext), FakeGameServerRuntime đọc/ghi SQLite, seed 2 server
-- SignalR (ServerHub + MapHub /hubs/server + ServerStateChanged push)
-- Frontend kết nối hub, cập nhật state qua push, hiện trạng thái kết nối
-- Verified: DB seed, CORS cho SignalR (WithOrigins+AllowCredentials), push hoạt động
+### Backend
 
-## Milestone 3 — Valheim Adapter & Real Process Management (HOÀN THÀNH)
-- Infrastructure/GameServers/IGameServerAdapter.cs: StartAsync→(bool,int pid), StopAsync(pid), GetStatusAsync(pid)→GameServerStatus
-- ValheimAdapter: Process.Start (ArgumentList, không shell injection), path từ config GameServers:Valheim:ExecutablePath (không hardcode trong code); StopAsync gửi kill -15; GetStatusAsync check /proc/[pid]
-- GameServerAdapterFactory: trả adapter theo ServerInstance.Type (Valheim/Minecraft)
-- GameServerManager (Infrastructure/Services) thay FakeGameServerRuntime: inject IGameServerAdapterFactory + AppDbContext + IHubContext; Start/Stop lưu ProcessId vào DB + SignalR push (Starting/Running/Stopping/Stopped)
-- ServerInstance thêm: Type (enum), ProcessId (int?), Port, WorldName, Password
-- EF Core migration AddProcessManagementAndType (dotnet-ef + Design pkg); Program.cs dùng Database.MigrateAsync() thay EnsureCreatedAsync
-- Dọn stale files template cũ (GameServerPanel.Api.*) + Class1.cs
+- ASP.NET Core 10 API with JWT auth, admin/authenticated policies, SignalR and SQLite.
+- Valheim adopted through `valheim-main.service`; systemd/readiness/UDP/cgroup checks, logs, members and versioned backups.
+- Project Zomboid adopted through `pzserver-game.service`; Flask fallback remains active.
+- PZ features: save-before-stop, RCON, players/kick/broadcast/raw commands, journal/filesystem logs, INI, SandboxVars, mods and host/process metrics.
+- World versions: PZ live backup performs RCON `save` before copying; Valheim backup requires stopped service; rollback requires stopped service and protects current HEAD first.
+- Persistence: `AuditLogs`, `SystemEvents`, `LogAggregates` migrations applied after SQLite backup. Collector runs on five-minute UTC windows in current production config.
+- Metrics: `/api/metrics/global` and `/api/aggregates`; raw logs are never persisted in SQLite.
 
-### Verified (browser thật + curl + sqlite)
-- Start Valheim: chạy process thật (test_valheim_server.sh) với đúng args -name/-port/-world/-password, PID lưu DB, status=1, /proc tồn tại
-- Stop: kill -15, /proc biến mất, DB clear PID + status=0
-- SignalR push: curl Start từ ngoài → UI tự đổi RUNNING (không client click)
-- Persist qua restart: PID 23878 + status=1 còn trong DB sau khi restart backend; process thật vẫn chạy độc lập
-- Build backend + frontend: 0 lỗi
+### Frontend
 
-### Deviation (kiến trúc)
-- IGameServerAdapter/IGameServerAdapterFactory đặt ở Infrastructure/GameServers (theo milestone). GameServerManager đặt ở Infrastructure/Services (không phải Application) vì nó phụ thuộc AppDbContext + IHubContext (Infrastructure); nếu đặt Application thì Application phải reference Infrastructure → vòng. IGameServerRuntime (Application/Interfaces) vẫn là contract cho Api.
-- Valheim binary CHƯA cài trên máy. Test bằng wrapper script backend/scripts/test_valheim_server.sh (cùng code path StartAsync/StopAsync/GetStatusAsync). Path test cấu hình trong appsettings.Development.json; path Valheim thật trong appsettings.json.
+- `App.tsx` contains orchestration only; feature components are under `src/components/`.
+- Overview cards show server state and 24-hour totals.
+- SVG/CSS charts show log health and player activity from aggregate windows.
+- Valheim tabs: Controls, Status & Checks, World Versions, Logs.
+- PZ tabs: Controls, World Versions, Logs, Config, RCON, Mods, Sandbox.
+- Shared JSON client sets `Content-Type: application/json`, preventing API 415 errors for body requests.
 
-### Remaining
-- Cài Valheim dedicated server thật (SteamCMD) rồi đổi ExecutablePath về valheim_server.x86_64
-- Minecraft adapter chưa implement (factory throw NotSupportedException)
-- Sync status thực tế với /proc khi backend khởi động (hiện chỉ đọc từ DB)
-- Auth, deploy
+### Verified
+
+- Backend build: 0 errors, 0 warnings.
+- Backend tests: 67/67 passed.
+- Frontend production build: passed.
+- Live RCON: `players`, `servermsg`, `save` returned HTTP 200.
+- Live backup routes loaded after backend reload; no live backup/rollback was executed during implementation.
+
+### Documentation
+
+- Architecture/source map: `docs/SOURCE_KNOWLEDGE_BASE.md`.
+- Milestone history and acceptance status: `MILESTONE_CONTEXT.md`.
+- Product/development entry point: `README.md`.
+- Frontend component guide: `frontend/game-panel-web/README.md`.
+
+### Remaining work
+
+- Add dedicated automated tests for RconClient, PZ config/Sandbox/Mods, backup/rollback and metrics chart data mapping.
+- Review and stage the complete worktree before commit/push.
+- Decide production process supervision for API/frontend; current listeners are manually started.
+- Do not disable or migrate Flask until explicit cutover approval.

@@ -8,6 +8,9 @@ public class AppDbContext : DbContext
 
     public DbSet<ServerInstance> ServerInstances => Set<ServerInstance>();
     public DbSet<User> Users => Set<User>();
+    public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
+    public DbSet<SystemEvent> SystemEvents => Set<SystemEvent>();
+    public DbSet<LogAggregate> LogAggregates => Set<LogAggregate>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -51,6 +54,38 @@ public class AppDbContext : DbContext
             e.HasIndex(x => x.NormalizedUsername)
                 .IsUnique()
                 .HasDatabaseName("UX_Users_NormalizedUsername");
+        });
+
+        modelBuilder.Entity<AuditLog>(e =>
+        {
+            e.ToTable("AuditLogs");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.UsernameSnapshot).HasMaxLength(200);
+            e.Property(x => x.Action).HasMaxLength(80);
+            e.Property(x => x.ResultCode).HasMaxLength(80);
+            e.Property(x => x.MetadataJson).HasMaxLength(4000);
+            e.HasIndex(x => x.CreatedAtUtc);
+            e.HasIndex(x => new { x.ServerInstanceId, x.CreatedAtUtc });
+        });
+
+        modelBuilder.Entity<SystemEvent>(e =>
+        {
+            e.ToTable("SystemEvents");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.EventType).HasMaxLength(80);
+            e.Property(x => x.Message).HasMaxLength(255);
+            e.Property(x => x.Severity).HasMaxLength(20);
+            e.HasIndex(x => x.CreatedAtUtc);
+            e.HasIndex(x => new { x.ServerInstanceId, x.CreatedAtUtc });
+        });
+
+        modelBuilder.Entity<LogAggregate>(e =>
+        {
+            e.ToTable("LogAggregates");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.LastErrorMessage).HasMaxLength(255);
+            e.HasIndex(x => new { x.ServerInstanceId, x.WindowStartUtc }).IsUnique();
+            e.HasIndex(x => x.WindowStartUtc);
         });
     }
 }
