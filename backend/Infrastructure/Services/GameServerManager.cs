@@ -67,6 +67,31 @@ public class GameServerManager : IGameServerRuntime
         return servers;
     }
 
+    public async Task<IEnumerable<ServerInstance>> RefreshActiveAsync(CancellationToken ct = default)
+    {
+        var servers = await _db.ServerInstances.Where(x => x.Status != ServerStatus.Stopped).OrderBy(x => x.Name).ToListAsync(ct);
+        var changed = false;
+        foreach (var server in servers)
+        {
+            try
+            {
+                var snapshot = await _factory.Create(server).InspectAsync(server);
+                if (snapshot.Status == GameServerStatus.Unknown) continue;
+                var previousStatus = server.Status;
+                changed |= ApplySnapshot(server, snapshot);
+                if (server.Status != previousStatus)
+                {
+                    await _hub.Clients.All.SendAsync("ServerStateChanged", server.Id, (int)server.Status, ct);
+                    await _events.RecordAsync(server.Id, SystemEventTypes.StateChanged, ServerStatusSeverity(server.Status),
+                        $"Heartbeat state changed from {previousStatus} to {server.Status}", previousStatus, server.Status, server.ProcessId, ct);
+                }
+            }
+            catch { /* Keep last known state when a probe is unavailable. */ }
+        }
+        if (changed) await _db.SaveChangesAsync(ct);
+        return servers;
+    }
+
     public async Task<bool> StartAsync(Guid id, CancellationToken ct = default)
     {
         var server = await _db.ServerInstances.FirstOrDefaultAsync(x => x.Id == id, ct);

@@ -40,7 +40,7 @@ public class ProjectZomboidAdapter : IGameServerAdapter
             return new(false, await InspectAsync(instance, ct));
         }
 
-        var deadline = DateTime.UtcNow.AddSeconds(150);
+        var deadline = DateTime.UtcNow.AddMinutes(30);
         GameServerRuntimeSnapshot snapshot;
         do
         {
@@ -110,10 +110,12 @@ public class ProjectZomboidAdapter : IGameServerAdapter
             state.ActiveState == "active" &&
             state.MainPid > 0 &&
             Directory.Exists($"/proc/{state.MainPid}");
+        if (state.ActiveState == "activating")
+            return new(GameServerStatus.Starting, state.MainPid > 0 ? state.MainPid : null, false);
+        if (state.ActiveState == "deactivating")
+            return new(GameServerStatus.Stopping, state.MainPid > 0 ? state.MainPid : null, false);
         if (!isRunning)
-        {
             return new(GameServerStatus.Stopped, null, false);
-        }
         return new(GameServerStatus.Running, state.MainPid, true);
     }
 

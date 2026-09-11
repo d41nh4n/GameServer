@@ -2,11 +2,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AuthProvider } from "../../auth";
 import type { Server } from "../../auth";
 import { Btn, GAME_ICON, STATUS_COLOR, STATUS_LABEL, StatusDot } from "../common";
+import { isActionAllowed } from "../../serverActionPolicy";
 import ValheimStatus, { ValheimLogs } from "./ValheimStatus";
 import WorldBackups from "./WorldBackups";
 import ServerResourceDetail from "./ServerResourceDetail";
+import ValheimSettings from "./ValheimSettings";
+import ValheimAdmin from "./ValheimAdmin";
 
-type DetailTab = "controls" | "status" | "backups" | "logs" | "config" | "rcon" | "mods" | "sandbox";
+type DetailTab = "controls" | "status" | "settings" | "admin" | "backups" | "logs" | "config" | "rcon" | "mods" | "sandbox";
 
 /* ═══════════ SERVER DETAIL VIEW ═══════════ */
 export default function ServerDetailView({ server, auth, loading, onAction, onBack, resources }: {
@@ -20,7 +23,7 @@ export default function ServerDetailView({ server, auth, loading, onAction, onBa
   const isValheim = server.gameType === "Valheim";
   const tabs: { id: DetailTab; label: string }[] = [
     { id: "controls", label: "Controls" },
-    ...(isValheim ? [{ id: "status" as DetailTab, label: "Status & Checks" }, { id: "backups" as DetailTab, label: "World Versions" }] : []),
+    ...(isValheim ? [{ id: "status" as DetailTab, label: "Status & Checks" }, { id: "settings" as DetailTab, label: "Game Settings" }, { id: "admin" as DetailTab, label: "Admin Control" }, { id: "backups" as DetailTab, label: "World Versions" }] : []),
     ...(isPZ ? [{ id: "backups" as DetailTab, label: "World Versions" }] : []),
     { id: "logs", label: "Logs" },
     ...(isPZ ? [
@@ -57,6 +60,8 @@ export default function ServerDetailView({ server, auth, loading, onAction, onBa
       <div className="detail-content">
         {tab === "controls" && <DetailControls server={server} loading={loading} onAction={onAction} />}
         {tab === "status" && isValheim && <ValheimStatus auth={auth} />}
+        {tab === "settings" && isValheim && <ValheimSettings auth={auth} />}
+        {tab === "admin" && isValheim && <ValheimAdmin serverId={server.id} auth={auth} serverStatus={server.status} />}
         {tab === "backups" && (isValheim || isPZ) && <WorldBackups gameType={isValheim ? "Valheim" : "ProjectZomboid"} auth={auth} serverStatus={server.status} />}
         {tab === "logs" && (isValheim ? <ValheimLogs auth={auth} /> : <DetailLogs server={server} auth={auth} />)}
         {tab === "config" && isPZ && <DetailConfig auth={auth} />}
@@ -69,10 +74,9 @@ export default function ServerDetailView({ server, auth, loading, onAction, onBa
 }
 
 /* ───── Controls tab ───── */
-function DetailControls({ server, loading, onAction }: { server: Server; loading: boolean; onAction: (id: string, type: "start" | "stop" | "restart") => void }) {
+export function DetailControls({ server, loading, onAction }: { server: Server; loading: boolean; onAction: (id: string, type: "start" | "stop" | "restart") => void }) {
   const isStopped = server.status === 0;
   const isRunning = server.status === 1;
-  const isBusy = server.status === 2 || server.status === 3;
   return (
     <div className="detail-controls">
       <div className="detail-section">
@@ -90,9 +94,9 @@ function DetailControls({ server, loading, onAction }: { server: Server; loading
       <div className="detail-section">
         <h4>Actions</h4>
         <div className="action-btns">
-          <Btn variant="primary" disabled={loading || isRunning || isBusy} busy={loading && !isRunning} onClick={() => onAction(server.id, "start")}>▶ Start</Btn>
-          <Btn variant="ghost" disabled={loading || !isRunning || isBusy} onClick={() => onAction(server.id, "restart")}>↻ Restart</Btn>
-          <Btn variant="danger" disabled={loading || isStopped || isBusy} busy={loading && isRunning} onClick={() => onAction(server.id, "stop")}>■ Stop</Btn>
+          <Btn variant="primary" disabled={!isActionAllowed(server.status, "start")} busy={loading && isStopped} onClick={() => onAction(server.id, "start")}>▶ Start</Btn>
+          <Btn variant="ghost" disabled={!isActionAllowed(server.status, "restart")} onClick={() => onAction(server.id, "restart")}>↻ Restart</Btn>
+          <Btn variant="danger" disabled={!isActionAllowed(server.status, "stop")} busy={loading && isRunning} onClick={() => onAction(server.id, "stop")}>■ Stop</Btn>
         </div>
       </div>
     </div>
@@ -177,7 +181,7 @@ function DetailConfig({ auth }: { auth: AuthProvider }) {
 /* ───── RCON tab ───── */
 function DetailRcon({ auth }: { auth: AuthProvider }) {
   const [cmd, setCmd] = useState(""); const [output, setOutput] = useState(""); const [busy, setBusy] = useState(false);
-  const [players, setPlayers] = useState<string[]>([]); const [playerBusy, setPlayerBusy] = useState(false);
+  const [players, setPlayers] = useState<string[]>([]); const [playerBusy, setPlayerBusy] = useState(false); const [accessBusy, setAccessBusy] = useState("");
 
   const loadPlayers = async () => {
     setPlayerBusy(true);
@@ -196,7 +200,13 @@ function DetailRcon({ auth }: { auth: AuthProvider }) {
     catch (e: any) { setOutput(`RCON error: ${e.message ?? e}`); }
     finally { setBusy(false); }
   };
-  const presets = [{ label: "Players", cmd: "players" }, { label: "Save", cmd: "save" }, { label: "Say Hello", cmd: 'servermsg "Hello from Panel"' }];
+  const setAccess = async (username: string, level: "user" | "admin") => {
+    setAccessBusy(`${username}:${level}`); setOutput("");
+    try { const res = await auth.pzSetAccessLevel(username, level); setOutput(res.output || `Access level updated: ${username} → ${level}`); }
+    catch (e: any) { setOutput(`Access level error: ${e.message ?? e}`); }
+    finally { setAccessBusy(""); }
+  };
+  const presets = [{ label: "Save", cmd: "save" }, { label: "Say Hello", cmd: 'servermsg "Hello from Panel"' }];
 
   return (
     <div className="detail-section">
@@ -206,7 +216,7 @@ function DetailRcon({ auth }: { auth: AuthProvider }) {
       </div>
       <div className="player-list">
         <div className="player-list-title">Online players <span className="server-count">{players.length}</span></div>
-        {players.length === 0 ? <p className="empty-inline">No players online or click Refresh Players</p> : players.map((p, i) => <div className="player-row" key={`${p}-${i}`}><span>👤 {p}</span><Btn variant="danger" onClick={() => run(`kickuser "${p}" -r "Kicked by admin"`)}>Kick</Btn></div>)}
+        {players.length === 0 ? <p className="empty-inline">No players online or click Refresh Players</p> : players.map((p, i) => <div className="player-row" key={`${p}-${i}`}><span>👤 {p}</span><div className="player-actions"><Btn variant="ghost" busy={accessBusy === `${p}:admin`} onClick={() => setAccess(p, "admin")}>Make admin</Btn><Btn variant="ghost" busy={accessBusy === `${p}:user`} onClick={() => setAccess(p, "user")}>Remove admin</Btn><Btn variant="danger" onClick={() => run(`kickuser "${p}" -r "Kicked by admin"`)}>Kick</Btn></div></div>)}
       </div>
       <div className="rcon-input-row">
         <input value={cmd} onChange={e => setCmd(e.target.value)} placeholder="Enter RCON command..." className="rcon-input" onKeyDown={e => e.key === "Enter" && !busy && cmd && run(cmd)} />

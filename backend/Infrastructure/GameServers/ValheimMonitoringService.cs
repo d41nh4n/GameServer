@@ -18,6 +18,8 @@ public sealed class ValheimMonitoringService
         var state = await _driver.GetStateAsync(Unit, ct);
         var members = ReadMembers();
         var backups = ListBackups();
+        var connectedPlayers = await GetConnectedPlayersAsync(state.InvocationId, ct);
+        var onlinePlayers = connectedPlayers.Where(x => x.Online && x.Name is not null).Select(x => x.Name!).ToList();
         return new ValheimMonitorSnapshot
         {
             ActiveState = state.ActiveState,
@@ -26,9 +28,24 @@ public sealed class ValheimMonitoringService
             InvocationId = state.InvocationId,
             Ready = state.IsRunning,
             Members = members,
+            OnlinePlayers = onlinePlayers,
+            ConnectedPlayers = connectedPlayers,
             Backups = backups,
             WorldPath = WorldRoot,
         };
+    }
+
+    private static async Task<List<ValheimOnlinePlayer>> GetConnectedPlayersAsync(string invocationId, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(invocationId)) return [];
+        var psi = new ProcessStartInfo { FileName = "/usr/bin/journalctl", UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
+        psi.ArgumentList.Add($"_SYSTEMD_INVOCATION_ID={invocationId}");
+        psi.ArgumentList.Add("-n"); psi.ArgumentList.Add("5000");
+        psi.ArgumentList.Add("--no-pager"); psi.ArgumentList.Add("-o"); psi.ArgumentList.Add("cat");
+        using var process = Process.Start(psi) ?? throw new InvalidOperationException("Cannot start journalctl");
+        var output = await process.StandardOutput.ReadToEndAsync(ct);
+        await process.WaitForExitAsync(ct);
+        return process.ExitCode == 0 ? ValheimOnlinePlayerParser.ParseConnections(output.Split('\n')).ToList() : [];
     }
 
     public async Task<string> GetLogsAsync(int lines = 200, CancellationToken ct = default)
@@ -181,7 +198,71 @@ public sealed record ValheimMonitorSnapshot
     public bool Ready { get; init; }
     public string WorldPath { get; init; } = "";
     public List<ValheimMember> Members { get; init; } = [];
+    public List<string> OnlinePlayers { get; init; } = [];
+    public List<ValheimOnlinePlayer> ConnectedPlayers { get; init; } = [];
     public List<ValheimBackup> Backups { get; init; } = [];
 }
 public sealed record ValheimMember { public string Id { get; init; } = ""; public string Role { get; init; } = ""; public string Source { get; init; } = ""; }
 public sealed record ValheimBackup { public string Name { get; init; } = ""; public string Path { get; init; } = ""; public DateTime CreatedAt { get; init; } public long SizeBytes { get; init; } }
+
+public sealed record ValheimOnlinePlayer(string SteamId, string? Name, bool Online);
+
+public static partial class ValheimOnlinePlayerParser
+{
+    [GeneratedRegex(@"Got character ZDOID from (?<name>[^:]+?)\s*:\s*(?<owner>\d+):(?<id>\d+)", RegexOptions.IgnoreCase)]
+    private static partial Regex CharacterState();
+
+    [GeneratedRegex(@"Got connection SteamID (?<steam>\d+)", RegexOptions.IgnoreCase)]
+    private static partial Regex SteamConnection();
+
+    [GeneratedRegex(@"Connections\s+(?<count>\d+)", RegexOptions.IgnoreCase)]
+    private static partial Regex ConnectionHeartbeat();
+
+    public static IReadOnlyList<ValheimOnlinePlayer> ParseConnections(IEnumerable<string> lines)
+    {
+        var players = new List<ValheimOnlinePlayer>();
+        foreach (var line in lines)
+        {
+            var count = ConnectionHeartbeat().Match(line);
+            if (count.Success && int.TryParse(count.Groups["count"].Value, out var connected))
+            {
+                if (connected == 0) players.Clear();
+                continue;
+            }
+            var steam = SteamConnection().Match(line);
+            if (steam.Success)
+            {
+                var id = steam.Groups["steam"].Value;
+                if (!players.Any(x => x.SteamId == id)) players.Add(new(id, null, false));
+                continue;
+            }
+            var match = CharacterState().Match(line);
+            if (!match.Success) continue;
+            var name = match.Groups["name"].Value.Trim();
+            if (name.Length is 0 or > 64) continue;
+            var online = match.Groups["owner"].Value != "0" || match.Groups["id"].Value != "0";
+            var index = players.FindLastIndex(x => x.Name is null);
+            if (index >= 0) players[index] = players[index] with { Name = name, Online = online };
+            else
+            {
+                var known = players.FindIndex(x => x.Name?.Equals(name, StringComparison.OrdinalIgnoreCase) == true);
+                if (known >= 0) players[known] = players[known] with { Online = online };
+            }
+        }
+        return players;
+    }
+
+    public static IReadOnlyList<string> Parse(IEnumerable<string> lines)
+    {
+        var online = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+        foreach (var line in lines)
+        {
+            var match = CharacterState().Match(line);
+            if (!match.Success) continue;
+            var name = match.Groups["name"].Value.Trim();
+            if (name.Length is 0 or > 64) continue;
+            online[name] = match.Groups["owner"].Value != "0" || match.Groups["id"].Value != "0";
+        }
+        return online.Where(x => x.Value).Select(x => x.Key).Order(StringComparer.OrdinalIgnoreCase).ToList();
+    }
+}

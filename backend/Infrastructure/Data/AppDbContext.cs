@@ -7,9 +7,11 @@ public class AppDbContext : DbContext
     public AppDbContext(DbContextOptions<AppDbContext> options) : base(options) { }
 
     public DbSet<ServerInstance> ServerInstances => Set<ServerInstance>();
+    public DbSet<ServerStatusSnapshot> ServerStatusSnapshots => Set<ServerStatusSnapshot>();
     public DbSet<User> Users => Set<User>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     public DbSet<SystemEvent> SystemEvents => Set<SystemEvent>();
+    public DbSet<ValheimWorldModifierSettings> ValheimWorldModifierSettings => Set<ValheimWorldModifierSettings>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -76,6 +78,25 @@ public class AppDbContext : DbContext
             e.Property(x => x.Severity).HasMaxLength(20);
             e.HasIndex(x => x.CreatedAtUtc);
             e.HasIndex(x => new { x.ServerInstanceId, x.CreatedAtUtc });
+        });
+
+        modelBuilder.Entity<ServerStatusSnapshot>(e =>
+        {
+            e.ToTable("ServerStatusSnapshots");
+            e.HasKey(x => x.ServerInstanceId);
+            e.Property(x => x.Status).HasConversion<int>();
+            e.Property(x => x.Source).HasMaxLength(40);
+            e.HasOne(x => x.ServerInstance).WithOne().HasForeignKey<ServerStatusSnapshot>(x => x.ServerInstanceId).OnDelete(DeleteBehavior.Cascade);
+            e.HasIndex(x => x.ObservedAtUtc);
+        });
+        modelBuilder.Entity<ValheimWorldModifierSettings>(e =>
+        {
+            e.ToTable("ValheimWorldModifierSettings");
+            e.HasKey(x => x.ServerInstanceId);
+            e.Property(x => x.Combat).HasMaxLength(20);
+            e.Property(x => x.RaidRate).HasMaxLength(20);
+            e.Property(x => x.DeathPenalty).HasMaxLength(20);
+            e.Property(x => x.PortalMode).HasMaxLength(20);
         });
 
     }

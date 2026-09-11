@@ -18,14 +18,14 @@
 
 - `App.tsx` contains orchestration only; feature components are under `src/components/`.
 - Overview shows host CPU/RAM/disk and per-server process usage; detail view repeats selected server usage.
-- Valheim tabs: Controls, Status & Checks, World Versions, Logs.
+- Valheim tabs: Controls, Status & Checks, World Versions, Logs; online players are separate from Admin/Permitted/Banned access lists.
 - PZ tabs: Controls, World Versions, Logs, Config, RCON, Mods, Sandbox.
 - Shared JSON client sets `Content-Type: application/json`, preventing API 415 errors for body requests.
 
 ### Verified
 
 - Backend build: 0 errors, 0 warnings.
-- Backend tests: 74/74 passed.
+- Backend tests: 77/77 passed.
 - Frontend production build: passed.
 - Live RCON: `players`, `servermsg`, `save` returned HTTP 200.
 - Live backup routes loaded after backend reload; no live backup/rollback was executed during implementation.

@@ -149,7 +149,17 @@ export class AuthProvider {
     return this.request<ServerOperationJob>(`/api/operations/${id}`);
   }
 
-  // ─── PZ endpoints ───
+  valheimCapabilities(id: string): Promise<any> {
+    return this.request<any>(`/api/servers/${id}/valheim/capabilities`);
+  }
+  valheimPlayers(id: string): Promise<any[]> {
+    return this.request<any[]>(`/api/servers/${id}/valheim/players`);
+  }
+  valheimAction(id: string, action: string, body: Record<string, unknown> = {}, idempotencyKey = crypto.randomUUID()): Promise<any> {
+    return this.request<any>(`/api/servers/${id}/valheim/actions/${action}`, { method: "POST", headers: { "Idempotency-Key": idempotencyKey }, body: JSON.stringify(body) });
+  }
+
+
   async pzLogs(id: string, lines = 200): Promise<{ content: string; lines: number }> {
     return this.request<{ content: string; lines: number }>(`/api/servers/${id}/logs?lines=${lines}`);
   }
@@ -180,6 +190,7 @@ export class AuthProvider {
   async pzRconCommand(command: string): Promise<any> {
     return this.request<any>("/api/pz/rcon/command", { method: "POST", body: JSON.stringify({ command }) });
   }
+  async pzSetAccessLevel(username: string, level: "user" | "admin"): Promise<any> { return this.request<any>("/api/pz/rcon/access-level", { method: "POST", body: JSON.stringify({ username, level }) }); }
   async pzRconPlayers(): Promise<any> {
     return this.request<any>("/api/pz/rcon/players");
   }
@@ -199,6 +210,8 @@ export class AuthProvider {
     return this.request<any>("/api/pz/rcon/kick", { method: "POST", body: JSON.stringify({ username, reason }) });
   }
   async valheimMonitor(): Promise<any> { return this.request<any>("/api/valheim/monitor"); }
+  async valheimSettings(): Promise<any> { return this.request<any>("/api/valheim/settings"); }
+  async valheimSettingsUpdate(settings: any): Promise<any> { return this.request<any>("/api/valheim/settings", { method: "PUT", body: JSON.stringify(settings) }); }
   async valheimLogs(lines = 200): Promise<any> { return this.request<any>(`/api/valheim/logs?lines=${lines}`); }
   async valheimMembers(): Promise<any> { return this.request<any>("/api/valheim/members"); }
   async valheimMemberAdd(id: string, role: string): Promise<any> { return this.request<any>("/api/valheim/members", { method: "POST", body: JSON.stringify({ id, role }) }); }

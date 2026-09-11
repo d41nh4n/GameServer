@@ -210,6 +210,11 @@ Auth JWT + Tailscale whitelist (Option A) — HOÀN THÀNH
 - [x] Manual safety check: Valheim PID `167796` and PZ PID `184252` unchanged before/after queue test
 - [x] Feature gap matrix added: `docs/FEATURE_GAP_MATRIX.md`
 
+- [x] Valheim Status & Checks separates live `OnlinePlayers` from Admin/Permitted/Banned access lists
+- [x] Online player parser uses the latest character ZDOID state within the current systemd invocation
+- [x] Live verification: `/api/valheim/monitor` returned `Ambatukam` and `Dainhan`; access lists remained empty
+- [x] Parser tests cover online, final `0:0` disconnect state and malformed lines; backend suite 77/77 passed
+
 ===CURRENT_STATE_2026-09-10===
 - Backend .NET 10 listens on `http://100.82.102.38:5000` under group context including `pzserver`; frontend Vite listens on `0.0.0.0:5173`.
 - Valheim `valheim-main.service` and PZ `pzserver-game.service` are adopted by the panel; both were tested through API lifecycle controls.

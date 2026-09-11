@@ -96,8 +96,21 @@ builder.Services.AddScoped<ValheimMonitoringService>();
 builder.Services.AddScoped<AuditLogService>();
 builder.Services.AddScoped<SystemEventService>();
 builder.Services.AddScoped<ResourceMetricsService>();
+builder.Services.AddScoped<ValheimSettingsApplyService>();
+builder.Services.AddSingleton<IGameControlProtocol>(sp =>
+{
+    var config = sp.GetRequiredService<IConfiguration>();
+    var client = new HttpClient
+    {
+        BaseAddress = new Uri(config["GameServers:Valheim:ControlProtocol:BaseUrl"] ?? "http://127.0.0.1:27666"),
+        Timeout = TimeSpan.FromSeconds(3),
+    };
+    return new ValheimControlProtocol(client, config);
+});
+builder.Services.AddSingleton<ValheimControlActionService>();
 builder.Services.AddSingleton<ServerOperationQueue>();
 builder.Services.AddHostedService<ServerOperationWorker>();
+builder.Services.AddHostedService<ServerStatusHeartbeat>();
 builder.Services.AddSignalR();
 
 // Login rate limiting partitionowane per client IP (5 prób / 1 minuta).
@@ -284,39 +297,57 @@ var loginRoute = app.MapPost("/api/auth/login", async (LoginRequest body, IAuthS
     return Results.Ok(new LoginResponse(token.Value, token.ExpiresAt));
 }).RequireRateLimiting("login");
 
-app.MapPost("/api/servers/{id}/start", async (Guid id, ServerOperationQueue queue, AuditLogService audit, HttpContext http) =>
+app.MapPost("/api/servers/{id}/start", async (Guid id, AppDbContext db, ServerOperationQueue queue, AuditLogService audit, HttpContext http) =>
 {
     try
     {
+        var server = await db.ServerInstances.FindAsync([id]);
+        if (server is null) return Results.NotFound();
+        if (server.Status != ServerStatus.Stopped) return Results.Conflict(new { error = $"Cannot start while server status is {server.Status}" });
         var subject = http.User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? http.User.FindFirst("sub")?.Value;
         var userId = Guid.TryParse(subject, out var parsed) ? parsed : (Guid?)null;
         var job = queue.Enqueue(id, ServerOperationKind.Start, userId, http.User.Identity?.Name ?? "admin");
+        server.Status = ServerStatus.Starting;
+        server.Ready = false;
+        await db.SaveChangesAsync();
         await audit.RecordAsync(http.User, AuditActions.StartServer, id, true, "QUEUED", new { action = "start", jobId = job.Id });
         return Results.Accepted($"/api/operations/{job.Id}", job);
     }
     catch (InvalidOperationException e) { return Results.Conflict(new { error = e.Message }); }
 }).RequireAuthorization("admin");
 
-app.MapPost("/api/servers/{id}/stop", async (Guid id, ServerOperationQueue queue, AuditLogService audit, HttpContext http) =>
+app.MapPost("/api/servers/{id}/stop", async (Guid id, AppDbContext db, ServerOperationQueue queue, AuditLogService audit, HttpContext http) =>
 {
     try
     {
+        var server = await db.ServerInstances.FindAsync([id]);
+        if (server is null) return Results.NotFound();
+        if (server.Status != ServerStatus.Running) return Results.Conflict(new { error = $"Cannot stop while server status is {server.Status}" });
         var subject = http.User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? http.User.FindFirst("sub")?.Value;
         var userId = Guid.TryParse(subject, out var parsed) ? parsed : (Guid?)null;
         var job = queue.Enqueue(id, ServerOperationKind.Stop, userId, http.User.Identity?.Name ?? "admin");
+        server.Status = ServerStatus.Stopping;
+        server.Ready = false;
+        await db.SaveChangesAsync();
         await audit.RecordAsync(http.User, AuditActions.StopServer, id, true, "QUEUED", new { action = "stop", jobId = job.Id });
         return Results.Accepted($"/api/operations/{job.Id}", job);
     }
     catch (InvalidOperationException e) { return Results.Conflict(new { error = e.Message }); }
 }).RequireAuthorization("admin");
 
-app.MapPost("/api/servers/{id}/restart", (Guid id, ServerOperationQueue queue, HttpContext http) =>
+app.MapPost("/api/servers/{id}/restart", async (Guid id, AppDbContext db, ServerOperationQueue queue, HttpContext http) =>
 {
     try
     {
+        var server = await db.ServerInstances.FindAsync([id]);
+        if (server is null) return Results.NotFound();
+        if (server.Status != ServerStatus.Running) return Results.Conflict(new { error = $"Cannot restart while server status is {server.Status}" });
         var subject = http.User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? http.User.FindFirst("sub")?.Value;
         var userId = Guid.TryParse(subject, out var parsed) ? parsed : (Guid?)null;
         var job = queue.Enqueue(id, ServerOperationKind.Restart, userId, http.User.Identity?.Name ?? "admin");
+        server.Status = ServerStatus.Stopping;
+        server.Ready = false;
+        await db.SaveChangesAsync();
         return Results.Accepted($"/api/operations/{job.Id}", job);
     }
     catch (InvalidOperationException e) { return Results.Conflict(new { error = e.Message }); }
@@ -365,6 +396,16 @@ app.MapPost("/api/pz/rcon/broadcast", async (RconBroadcast body, IRconClient rco
 app.MapPost("/api/pz/rcon/kick", async (RconKick body, IRconClient rcon) =>
 {
     try { return Results.Ok(new { success = true, output = await rcon.SendCommandAsync($"kickuser \"{body.Username}\" -r \"{body.Reason}\"") }); }
+    catch (Exception e) { return Results.Problem(e.Message); }
+}).RequireAuthorization("admin");
+
+app.MapPost("/api/pz/rcon/access-level", async ([FromBody] PzAccessLevelChange body, IRconClient rcon) =>
+{
+    if (string.IsNullOrWhiteSpace(body.Username) || body.Username.Length > 64 || body.Username.Any(char.IsWhiteSpace) || body.Username.Any(c => c is '"' or '\\'))
+        return Results.BadRequest(new { error = "Invalid PZ username" });
+    var level = body.Level.Trim().ToLowerInvariant();
+    if (level is not ("user" or "admin")) return Results.BadRequest(new { error = "Level must be user or admin" });
+    try { return Results.Ok(new { success = true, username = body.Username, level, output = await rcon.SendCommandAsync($"setaccesslevel \"{body.Username}\" {level}") }); }
     catch (Exception e) { return Results.Problem(e.Message); }
 }).RequireAuthorization("admin");
 
@@ -479,6 +520,73 @@ app.MapGet("/api/pz/ops/health", async (AppDbContext db, PzOpsService ops) =>
     catch (Exception e) { return Results.Problem(e.Message); }
 }).RequireAuthorization("authenticated");
 
+app.MapGet("/api/valheim/settings", async (AppDbContext db) =>
+{
+    var server = await db.ServerInstances.AsNoTracking().FirstOrDefaultAsync(x => x.GameType == "Valheim");
+    if (server == null) return Results.NotFound();
+    var settings = await db.ValheimWorldModifierSettings.AsNoTracking().FirstOrDefaultAsync(x => x.ServerInstanceId == server.Id)
+        ?? new ValheimWorldModifierSettings { ServerInstanceId = server.Id };
+    return Results.Ok(new { serverId = server.Id, settings });
+}).RequireAuthorization("authenticated");
+
+app.MapPut("/api/valheim/settings", async ([FromBody] ValheimWorldModifierSettingsRequest body, AppDbContext db, ISystemdRuntimeDriver driver, ValheimSettingsApplyService apply, AuditLogService audit, HttpContext http) =>
+{
+    var server = await db.ServerInstances.FirstOrDefaultAsync(x => x.GameType == "Valheim");
+    if (server == null) return Results.NotFound();
+    var state = await driver.GetStateAsync(server.RuntimeId ?? "valheim-main.service");
+    if (state.ActiveState == "active") return Results.Conflict(new { error = "Stop Valheim before changing world modifiers" });
+    try
+    {
+        var model = ValheimSettingsAdapter.Validate(new ValheimWorldModifierSettingsModel(body.Combat, body.ResourceRate, body.RaidRate, body.DeathPenalty, body.PortalMode, body.PassiveEnemies, body.PlayerBasedRaids, body.HammerMode, body.NoBuildCost));
+        await apply.ApplyAsync(model);
+        var settings = await db.ValheimWorldModifierSettings.FirstOrDefaultAsync(x => x.ServerInstanceId == server.Id);
+        if (settings == null) { settings = new ValheimWorldModifierSettings { ServerInstanceId = server.Id }; db.ValheimWorldModifierSettings.Add(settings); }
+        settings.Combat = model.Combat; settings.ResourceRate = model.ResourceRate; settings.RaidRate = model.RaidRate; settings.DeathPenalty = model.DeathPenalty; settings.PortalMode = model.PortalMode; settings.PassiveEnemies = model.PassiveEnemies; settings.PlayerBasedRaids = model.PlayerBasedRaids; settings.HammerMode = model.HammerMode; settings.NoBuildCost = model.NoBuildCost;
+        await db.SaveChangesAsync();
+        await audit.RecordAsync(http.User, AuditActions.UpdateConfig, server.Id, true, "APPLIED", new { settings = "valheim_world_modifiers" });
+        return Results.Ok(new { success = true, settings, requiresRestart = true, message = "Settings applied to launcher; restart Valheim to activate them" });
+    }
+    catch (ArgumentException e) { return Results.BadRequest(new { error = e.Message }); }
+}).RequireAuthorization("admin");
+
+var valheimActions = new Dictionary<string, ValheimCapability>
+{
+    ["kick"] = ValheimCapability.KickPlayer, ["ban"] = ValheimCapability.BanPlayer,
+    ["broadcast"] = ValheimCapability.BroadcastMessage, ["save"] = ValheimCapability.SaveWorld,
+    ["time"] = ValheimCapability.ChangeTime, ["weather"] = ValheimCapability.ChangeWeather,
+    ["teleport"] = ValheimCapability.TeleportPlayer, ["spawn"] = ValheimCapability.SpawnItem,
+    ["inventory"] = ValheimCapability.InventoryManagement, ["god-mode"] = ValheimCapability.GodMode,
+};
+app.MapGet("/api/servers/{id}/valheim/capabilities", async (Guid id, AppDbContext db, IGameControlProtocol protocol) =>
+{
+    if (!await db.ServerInstances.AnyAsync(x => x.Id == id && x.GameType == "Valheim")) return Results.NotFound();
+    return Results.Ok(await protocol.GetCapabilitiesAsync(id));
+}).RequireAuthorization("admin");
+app.MapGet("/api/servers/{id}/valheim/players", async (Guid id, AppDbContext db, IGameControlProtocol protocol) =>
+{
+    if (!await db.ServerInstances.AnyAsync(x => x.Id == id && x.GameType == "Valheim")) return Results.NotFound();
+    var caps = await protocol.GetCapabilitiesAsync(id);
+    if (!caps.Connected) return Results.Problem(caps.Reason, statusCode: StatusCodes.Status503ServiceUnavailable);
+    if (!caps.Supported.Contains(ValheimCapability.OnlinePlayers)) return Results.Problem("Online players capability is not supported", statusCode: StatusCodes.Status501NotImplemented);
+    return Results.Ok(await protocol.GetPlayersAsync(id));
+}).RequireAuthorization("admin");
+foreach (var action in valheimActions)
+{
+    app.MapPost($"/api/servers/{{id}}/valheim/actions/{action.Key}", async (Guid id, [FromBody] ValheimControlActionBody body, AppDbContext db, ValheimControlActionService controls, AuditLogService audit, HttpRequest request, CancellationToken ct) =>
+    {
+        var server = await db.ServerInstances.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id && x.GameType == "Valheim", ct);
+        if (server is null) return Results.NotFound();
+        if (server.Status != ServerStatus.Running) return Results.Conflict(new { error = "Valheim must be Started for live control" });
+        if (body is null) return Results.BadRequest(new { error = "Request body is required" });
+        var requestBody = new ValheimControlRequest(body.TargetPlayerId, body.Message, body.Value, body.Weather, body.Item, body.Amount);
+        var validationError = ValheimControlValidation.Validate(action.Value, requestBody);
+        if (validationError is not null) return Results.BadRequest(new { error = validationError });
+        var key = request.Headers["Idempotency-Key"].ToString();
+        var result = await controls.ExecuteAsync(id, action.Value, requestBody, key, ct);
+        await audit.RecordAsync(request.HttpContext.User, $"VALHEIM_{action.Key.ToUpperInvariant()}", id, result.Status == 200, result.Result.Code, new { capability = action.Value.ToString(), targetPlayerId = body.TargetPlayerId });
+        return Results.Json(result.Result, statusCode: result.Status);
+    }).RequireAuthorization("admin");
+}
 app.MapGet("/api/valheim/monitor", async (ValheimMonitoringService monitoring) =>
 {
     try { return Results.Ok(new { success = true, monitor = await monitoring.GetSnapshotAsync() }); }

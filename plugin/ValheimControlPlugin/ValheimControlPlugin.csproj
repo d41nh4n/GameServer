@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net40</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AssemblyName>ValheimControlPlugin</AssemblyName>
+    <RootNamespace>ValheimControlPlugin</RootNamespace>
+    <ValheimManagedDir Condition="'$(ValheimManagedDir)' == ''">$(MSBuildThisFileDirectory)local/Managed</ValheimManagedDir>
+    <BepInExDir Condition="'$(BepInExDir)' == ''">$(MSBuildThisFileDirectory)local/BepInEx</BepInExDir>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+    <Reference Include="BepInEx"><HintPath>$(BepInExDir)/core/BepInEx.dll</HintPath></Reference>
+    <Reference Include="assembly_valheim"><HintPath>$(ValheimManagedDir)/assembly_valheim.dll</HintPath></Reference>
+    <Reference Include="UnityEngine"><HintPath>$(ValheimManagedDir)/UnityEngine.dll</HintPath></Reference>
+    <Reference Include="UnityEngine.CoreModule"><HintPath>$(ValheimManagedDir)/UnityEngine.CoreModule.dll</HintPath></Reference>
+    <Reference Include="netstandard"><HintPath>$(ValheimManagedDir)/netstandard.dll</HintPath></Reference>
+  </ItemGroup>
+</Project>

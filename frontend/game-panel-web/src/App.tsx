@@ -27,7 +27,11 @@ export default function App() {
   useEffect(() => auth.subscribe(() => setLoggedIn(auth.isAuthenticated)), [auth]);
 
   const fetchServers = useCallback(async () => {
-    try { setServers(await auth.listServers()); }
+    try {
+      const next = await auth.listServers();
+      setServers(next);
+      setSelectedServer(prev => prev ? next.find(s => s.id === prev.id) ?? prev : prev);
+    }
     catch (e) { setError(e instanceof ApiError ? e.message : "API Error"); }
   }, [auth]);
 
@@ -49,15 +53,20 @@ export default function App() {
       setServers(prev => prev.map(s => s.id === id ? { ...s, status } : s));
       setSelectedServer(prev => prev?.id === id ? { ...prev, status } : prev);
     });
+    connection.on("ServerHeartbeat", (id: string, status: number, ready: boolean) => {
+      setServers(prev => prev.map(s => s.id === id ? { ...s, status, ready } : s));
+      setSelectedServer(prev => prev?.id === id ? { ...prev, status, ready } : prev);
+    });
     connection.onclose(() => { if (!disposed) setConnStatus("disconnected"); });
     start(); fetchServers(); fetchResources();
-    return () => { disposed = true; connection.stop().catch(() => {}); };
+    const refreshTimer = window.setInterval(() => { void fetchServers(); }, 5000);
+    return () => { disposed = true; window.clearInterval(refreshTimer); connection.stop().catch(() => {}); };
   }, [loggedIn, auth, fetchServers, fetchResources]);
 
   const doLogin = async (user: string, pass: string) => { setUsername(user); await auth.login(user, pass); };
   const doLogout = () => { conn?.stop().catch(() => {}); setConn(null); setServers([]); setResources(null); setConnStatus("disconnected"); auth.logout(); };
   const trackOperation = async (jobId: string) => {
-    for (let i = 0; i < 36; i++) {
+    for (let i = 0; i < 360; i++) {
       await new Promise(resolve => window.setTimeout(resolve, 5000));
       try {
         const job = await auth.operation(jobId);

@@ -1,11 +1,11 @@
 import type { ButtonHTMLAttributes, ReactNode } from "react";
 
-export const STATUS_LABEL: Record<number, string> = { 0: "Stopped", 1: "Running", 2: "Starting", 3: "Stopping" };
+export const STATUS_LABEL: Record<number, string> = { 0: "Stopped", 1: "Started", 2: "Starting", 3: "Stopping" };
 export const STATUS_COLOR: Record<number, string> = { 0: "var(--red)", 1: "var(--green)", 2: "var(--orange)", 3: "var(--orange)" };
 export const GAME_ICON: Record<string, string> = { Valheim: "⚔", Minecraft: "⛏", ProjectZomboid: "🧟", default: "🎮" };
 
 export function Btn({ children, variant, busy, ...rest }: { children: ReactNode; variant?: "primary" | "danger" | "ghost"; busy?: boolean } & ButtonHTMLAttributes<HTMLButtonElement>) {
-  return <button className={`btn btn-${variant ?? "primary"}`} disabled={busy || rest.disabled} {...rest}>{busy ? <span className="spinner" /> : children}</button>;
+  return <button className={`btn btn-${variant ?? "primary"}`} {...rest} disabled={busy || rest.disabled}>{busy ? <span className="spinner" /> : children}</button>;
 }
 
 export function StatusDot({ status, sm }: { status: number; sm?: boolean }) {

@@ -3,6 +3,7 @@ using System;
 using GamePanel.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -10,9 +11,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace GamePanel.Infrastructure.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260910165603_AddValheimWorldModifierSettings")]
+    partial class AddValheimWorldModifierSettings
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.11");
@@ -230,25 +233,6 @@ namespace GamePanel.Infrastructure.Migrations
                         .HasDatabaseName("UX_Users_NormalizedUsername");
 
                     b.ToTable("Users", (string)null);
-                });
-
-            modelBuilder.Entity("GamePanel.Domain.Entities.ServerStatusSnapshot", b =>
-                {
-                    b.Property<Guid>("ServerInstanceId").HasColumnType("TEXT");
-                    b.Property<int>("Status").HasColumnType("INTEGER");
-                    b.Property<int?>("ProcessId").HasColumnType("INTEGER");
-                    b.Property<bool>("Ready").HasColumnType("INTEGER");
-                    b.Property<DateTime>("ObservedAtUtc").HasColumnType("TEXT");
-                    b.Property<string>("Source").IsRequired().HasMaxLength(40).HasColumnType("TEXT");
-                    b.HasKey("ServerInstanceId");
-                    b.HasIndex("ObservedAtUtc");
-                    b.HasOne("GamePanel.Domain.Entities.ServerInstance", "ServerInstance")
-                        .WithOne()
-                        .HasForeignKey("GamePanel.Domain.Entities.ServerStatusSnapshot", "ServerInstanceId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.ToTable("ServerStatusSnapshots", (string)null);
                 });
 
             modelBuilder.Entity("GamePanel.Domain.Entities.ValheimWorldModifierSettings", b =>

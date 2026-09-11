@@ -113,14 +113,13 @@ public class IntegrationAuthTests : IDisposable
     }
 
     [Fact]
-    public async Task Admin_Stop_Returns202_ThenInvokesRuntime()
+    public async Task Admin_Stop_WhenStopped_Returns409_NoRuntimeInvocation()
     {
         var admin = await LoginAdmin();
         var before = _runtime.StopCallCount;
-        var (status, body) = await Send("POST", "/api/servers/11111111-1111-1111-1111-111111111111/stop", null, admin, null);
-        Assert.Equal(HttpStatusCode.Accepted, status);
-        Assert.Contains("\"id\"", Str(body), StringComparison.OrdinalIgnoreCase);
-        await WaitUntilAsync(() => _runtime.StopCallCount == before + 1);
+        var (status, _) = await Send("POST", "/api/servers/11111111-1111-1111-1111-111111111111/stop", null, admin, null);
+        Assert.Equal(HttpStatusCode.Conflict, status);
+        Assert.Equal(before, _runtime.StopCallCount);
     }
 
     [Fact]

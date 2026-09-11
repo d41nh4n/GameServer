@@ -6,6 +6,8 @@ type Monitor = {
   activeState: string; subState: string; mainPid: number | null;
   invocationId: string; ready: boolean; worldPath: string;
   members: { id: string; role: string; source: string }[];
+  onlinePlayers: string[];
+  connectedPlayers: { steamId: string; name: string | null; online: boolean }[];
   backups: { name: string; path: string; createdAt: string; sizeBytes: number }[];
 };
 
@@ -69,7 +71,11 @@ export default function ValheimStatus({ auth }: { auth: AuthProvider }) {
     </div>
     <div className="info-grid status-info"><div><span className="info-label">Invocation ID</span><span>{monitor.invocationId || "—"}</span></div><div><span className="info-label">World path</span><span title={monitor.worldPath}>{monitor.worldPath || "—"}</span></div></div>
 
-    <div className="status-subsection"><div className="status-panel-header"><h4>Members ({monitor.members.length})</h4></div>
+    <div className="status-subsection"><div className="status-panel-header"><h4>Connected players ({monitor.connectedPlayers?.length ?? monitor.onlinePlayers?.length ?? 0})</h4></div>
+      <div className="player-list">{(monitor.connectedPlayers?.length ?? 0) === 0 ? <p className="empty-inline">No players detected online</p> : monitor.connectedPlayers.map(player => <div className="player-row" key={player.steamId}><span>{player.online ? "🟢" : "🟡"} {player.name || "Loading character..."}</span><span className="muted">{player.steamId} · {player.online ? "Online" : "Connecting"}</span></div>)}</div>
+    </div>
+
+    <div className="status-subsection"><div className="status-panel-header"><h4>Access lists ({monitor.members.length})</h4></div>
       <div className="rcon-input-row"><input className="rcon-input" value={memberId} onChange={e => setMemberId(e.target.value)} placeholder="Steam ID / member ID" /><select className="sandbox-select" value={memberRole} onChange={e => setMemberRole(e.target.value)}><option>Permitted</option><option>Admin</option><option>Banned</option></select><Btn busy={memberBusy} onClick={addMember}>Add</Btn></div>
       <div className="member-list">{monitor.members.length === 0 ? <p className="empty-inline">No members configured</p> : monitor.members.map(m => <div className="player-row" key={`${m.role}-${m.id}`}><span><strong>{m.role}</strong> · {m.id}</span><Btn variant="danger" busy={memberBusy} onClick={() => removeMember(m.id, m.role)}>Remove</Btn></div>)}</div>
     </div>
