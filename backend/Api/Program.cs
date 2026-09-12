@@ -633,6 +633,33 @@ app.MapPost("/api/valheim/backups/{version}/rollback", async (string version, Va
     catch (Exception e) { return Results.BadRequest(new { success = false, error = e.Message }); }
 }).RequireAuthorization("admin");
 
+app.MapGet("/api/valheim/version", async (ValheimMonitoringService monitoring, CancellationToken ct) =>
+{
+    try
+    {
+        var installed = monitoring.GetInstalledBuildId();
+        var latest = await ValheimMonitoringService.GetLatestBuildIdAsync(ct, forceRefresh: true);
+        var updateAvailable = !string.IsNullOrEmpty(installed) && !string.IsNullOrEmpty(latest) && installed != latest;
+        return Results.Ok(new { success = true, installedBuildId = installed, latestBuildId = latest, updateAvailable });
+    }
+    catch (Exception e) { return Results.Problem(e.Message); }
+}).RequireAuthorization("authenticated");
+
+app.MapPost("/api/valheim/update", async (ValheimMonitoringService monitoring, AuditLogService audit, HttpContext http, CancellationToken ct) =>
+{
+    try
+    {
+        var result = await monitoring.UpdateServerAsync(ct);
+        await audit.RecordAsync(http.User, "VALHEIM_UPDATE", null, result.Success, result.Success ? "UPDATED" : "FAILED", new { result.ExitCode, result.InstalledBuildId }, ct);
+        return result.Success
+            ? Results.Ok(new { success = true, result })
+            : Results.Json(new { success = false, result }, statusCode: StatusCodes.Status500InternalServerError);
+    }
+    catch (InvalidOperationException e) { return Results.Conflict(new { success = false, error = e.Message }); }
+    catch (FileNotFoundException e) { return Results.Problem(e.Message, statusCode: StatusCodes.Status500InternalServerError); }
+    catch (Exception e) { return Results.Problem(e.Message); }
+}).RequireAuthorization("admin");
+
 app.MapGet("/api/pz/backups", (PzWorldBackupService backups) =>
     Results.Ok(new { success = true, backups = backups.List() }))
     .RequireAuthorization("authenticated");

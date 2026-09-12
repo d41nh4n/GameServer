@@ -219,6 +219,12 @@ export class AuthProvider {
   async valheimBackups(): Promise<any> { return this.request<any>("/api/valheim/backups"); }
   async valheimCreateBackup(): Promise<any> { return this.request<any>("/api/valheim/backups", { method: "POST" }); }
   async valheimRollback(version: string): Promise<any> { return this.request<any>(`/api/valheim/backups/${encodeURIComponent(version)}/rollback`, { method: "POST" }); }
+  async valheimVersion(): Promise<{ success: boolean; installedBuildId?: string; latestBuildId?: string; updateAvailable?: boolean }> {
+    return this.request<{ success: boolean; installedBuildId?: string; latestBuildId?: string; updateAvailable?: boolean }>("/api/valheim/version");
+  }
+  async valheimUpdate(): Promise<{ success: boolean; result?: { success: boolean; exitCode: number; output: string; installedBuildId?: string }; error?: string }> {
+    return this.request<{ success: boolean; result?: { success: boolean; exitCode: number; output: string; installedBuildId?: string }; error?: string }>("/api/valheim/update", { method: "POST" });
+  }
   async pzBackups(): Promise<any> { return this.request<any>("/api/pz/backups"); }
   async pzCreateBackup(): Promise<any> { return this.request<any>("/api/pz/backups", { method: "POST" }); }
   async pzRollback(version: string): Promise<any> { return this.request<any>(`/api/pz/backups/${encodeURIComponent(version)}/rollback`, { method: "POST" }); }

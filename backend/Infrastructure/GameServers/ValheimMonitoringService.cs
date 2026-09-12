@@ -10,6 +10,15 @@ public sealed class ValheimMonitoringService
     private const string WorldRoot = DataRoot + "/worlds_local";
     private const string BackupRoot = "/home/nh4n/backups/game-server-panel/valheim";
     private const string Unit = "valheim-main.service";
+    private const string ServerRoot = "/srv/gamepanel/instances/valheim-main/server";
+    private const string ManifestPath = ServerRoot + "/steamapps/appmanifest_896660.acf";
+    private const string RuntimeRoot = "/srv/gamepanel/instances/valheim-main/runtime";
+    private const string SteamCmdBinary = "/usr/games/steamcmd";
+
+    private static string? _cachedLatestBuildId;
+    private static DateTime _lastLatestBuildCheck = DateTime.MinValue;
+    private static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(10);
+    private static readonly HttpClient _httpClient = new() { Timeout = TimeSpan.FromSeconds(5) };
 
     public ValheimMonitoringService(ISystemdRuntimeDriver driver) => _driver = driver;
 
@@ -20,6 +29,11 @@ public sealed class ValheimMonitoringService
         var backups = ListBackups();
         var connectedPlayers = await GetConnectedPlayersAsync(state.InvocationId, ct);
         var onlinePlayers = connectedPlayers.Where(x => x.Online && x.Name is not null).Select(x => x.Name!).ToList();
+        var installedBuild = GetInstalledBuildId();
+        var latestBuild = await GetLatestBuildIdAsync(ct);
+        var updateAvailable = !string.IsNullOrEmpty(installedBuild) &&
+                              !string.IsNullOrEmpty(latestBuild) &&
+                              installedBuild != latestBuild;
         return new ValheimMonitorSnapshot
         {
             ActiveState = state.ActiveState,
@@ -32,6 +46,9 @@ public sealed class ValheimMonitoringService
             ConnectedPlayers = connectedPlayers,
             Backups = backups,
             WorldPath = WorldRoot,
+            InstalledBuildId = installedBuild,
+            LatestBuildId = latestBuild,
+            UpdateAvailable = updateAvailable,
         };
     }
 
@@ -187,6 +204,113 @@ public sealed class ValheimMonitoringService
 
     private static long DirectorySize(DirectoryInfo directory) =>
         directory.EnumerateFiles("*", SearchOption.AllDirectories).Sum(x => x.Length);
+
+    public static string? ParseBuildIdFromManifest(string content)
+    {
+        if (string.IsNullOrWhiteSpace(content)) return null;
+        var match = Regex.Match(content, @"""buildid""\s+""(?<buildid>\d+)""", RegexOptions.IgnoreCase);
+        return match.Success ? match.Groups["buildid"].Value : null;
+    }
+
+    public string? GetInstalledBuildId(string? customManifestPath = null)
+    {
+        try
+        {
+            var path = customManifestPath ?? ManifestPath;
+            if (!File.Exists(path)) return null;
+            var text = File.ReadAllText(path);
+            return ParseBuildIdFromManifest(text);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    public static async Task<string?> GetLatestBuildIdAsync(CancellationToken ct = default, bool forceRefresh = false)
+    {
+        if (!forceRefresh && _cachedLatestBuildId != null && DateTime.UtcNow - _lastLatestBuildCheck < CacheDuration)
+        {
+            return _cachedLatestBuildId;
+        }
+
+        try
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Get, "https://api.steamcmd.net/v1/info/896660");
+            using var res = await _httpClient.SendAsync(req, ct);
+            if (!res.IsSuccessStatusCode) return _cachedLatestBuildId;
+
+            using var doc = System.Text.Json.JsonDocument.Parse(await res.Content.ReadAsStringAsync(ct));
+            if (doc.RootElement.TryGetProperty("data", out var data) &&
+                data.TryGetProperty("896660", out var app) &&
+                app.TryGetProperty("depots", out var depots) &&
+                depots.TryGetProperty("branches", out var branches) &&
+                branches.TryGetProperty("public", out var pub) &&
+                pub.TryGetProperty("buildid", out var bid))
+            {
+                var idStr = bid.GetString();
+                if (!string.IsNullOrEmpty(idStr))
+                {
+                    _cachedLatestBuildId = idStr;
+                    _lastLatestBuildCheck = DateTime.UtcNow;
+                    return idStr;
+                }
+            }
+        }
+        catch
+        {
+            // fallback gracefully
+        }
+        return _cachedLatestBuildId;
+    }
+
+    public async Task<ValheimUpdateResult> UpdateServerAsync(CancellationToken ct = default)
+    {
+        var state = await _driver.GetStateAsync(Unit, ct);
+        if (state.ActiveState == "active")
+        {
+            throw new InvalidOperationException("Stop Valheim before updating via SteamCMD");
+        }
+
+        if (!File.Exists(SteamCmdBinary))
+        {
+            throw new FileNotFoundException("SteamCMD executable not found", SteamCmdBinary);
+        }
+
+        var psi = new ProcessStartInfo
+        {
+            FileName = SteamCmdBinary,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        psi.Environment["HOME"] = RuntimeRoot;
+        psi.ArgumentList.Add("+force_install_dir");
+        psi.ArgumentList.Add(ServerRoot);
+        psi.ArgumentList.Add("+login");
+        psi.ArgumentList.Add("anonymous");
+        psi.ArgumentList.Add("+app_update");
+        psi.ArgumentList.Add("896660");
+        psi.ArgumentList.Add("validate");
+        psi.ArgumentList.Add("+quit");
+
+        using var process = Process.Start(psi) ?? throw new InvalidOperationException("Cannot start SteamCMD");
+        var outputTask = process.StandardOutput.ReadToEndAsync(ct);
+        var errorTask = process.StandardError.ReadToEndAsync(ct);
+        await process.WaitForExitAsync(ct);
+
+        var output = await outputTask;
+        var error = await errorTask;
+        var combined = $"{output}\n{error}".Trim();
+
+        return new ValheimUpdateResult
+        {
+            Success = process.ExitCode == 0,
+            ExitCode = process.ExitCode,
+            Output = combined,
+            InstalledBuildId = GetInstalledBuildId(),
+        };
+    }
 }
 
 public sealed record ValheimMonitorSnapshot
@@ -201,6 +325,17 @@ public sealed record ValheimMonitorSnapshot
     public List<string> OnlinePlayers { get; init; } = [];
     public List<ValheimOnlinePlayer> ConnectedPlayers { get; init; } = [];
     public List<ValheimBackup> Backups { get; init; } = [];
+    public string? InstalledBuildId { get; init; }
+    public string? LatestBuildId { get; init; }
+    public bool UpdateAvailable { get; init; }
+}
+
+public sealed record ValheimUpdateResult
+{
+    public bool Success { get; init; }
+    public int ExitCode { get; init; }
+    public string Output { get; init; } = "";
+    public string? InstalledBuildId { get; init; }
 }
 public sealed record ValheimMember { public string Id { get; init; } = ""; public string Role { get; init; } = ""; public string Source { get; init; } = ""; }
 public sealed record ValheimBackup { public string Name { get; init; } = ""; public string Path { get; init; } = ""; public DateTime CreatedAt { get; init; } public long SizeBytes { get; init; } }

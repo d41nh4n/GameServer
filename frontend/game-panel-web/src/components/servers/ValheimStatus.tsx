@@ -9,6 +9,9 @@ type Monitor = {
   onlinePlayers: string[];
   connectedPlayers: { steamId: string; name: string | null; online: boolean }[];
   backups: { name: string; path: string; createdAt: string; sizeBytes: number }[];
+  installedBuildId?: string;
+  latestBuildId?: string;
+  updateAvailable?: boolean;
 };
 
 function Check({ label, ok, value }: { label: string; ok: boolean; value: string }) {
@@ -23,6 +26,9 @@ export default function ValheimStatus({ auth }: { auth: AuthProvider }) {
   const [memberRole, setMemberRole] = useState("Permitted");
   const [memberBusy, setMemberBusy] = useState(false);
   const [backupBusy, setBackupBusy] = useState(false);
+  const [updateBusy, setUpdateBusy] = useState(false);
+  const [versionChecking, setVersionChecking] = useState(false);
+  const [updateLog, setUpdateLog] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true); setError("");
@@ -32,6 +38,49 @@ export default function ValheimStatus({ auth }: { auth: AuthProvider }) {
   }, [auth]);
 
   useEffect(() => { refresh(); }, [refresh]);
+
+  const checkVersion = async () => {
+    setVersionChecking(true); setError("");
+    try {
+      const res = await auth.valheimVersion();
+      setMonitor(prev => prev ? {
+        ...prev,
+        installedBuildId: res.installedBuildId ?? prev.installedBuildId,
+        latestBuildId: res.latestBuildId ?? prev.latestBuildId,
+        updateAvailable: res.updateAvailable ?? prev.updateAvailable,
+      } : prev);
+    } catch (e: any) {
+      setError(e.message ?? "Failed to check latest game version");
+    } finally {
+      setVersionChecking(false);
+    }
+  };
+
+  const runUpdate = async () => {
+    if (active) {
+      alert("Please stop the Valheim server before updating via SteamCMD.");
+      return;
+    }
+    if (!window.confirm("Are you sure you want to update the Valheim Dedicated Server using SteamCMD? This will validate and update the server installation files.")) {
+      return;
+    }
+    setUpdateBusy(true); setError(""); setUpdateLog(null);
+    try {
+      const res = await auth.valheimUpdate();
+      if (res.result) {
+        setUpdateLog(res.result.output);
+        if (res.result.success) {
+          await refresh();
+        } else {
+          setError(`SteamCMD update failed (Exit code: ${res.result.exitCode})`);
+        }
+      }
+    } catch (e: any) {
+      setError(e.message ?? "Update request failed");
+    } finally {
+      setUpdateBusy(false);
+    }
+  };
 
   const addMember = async () => {
     if (!memberId.trim()) return;
@@ -70,6 +119,63 @@ export default function ValheimStatus({ auth }: { auth: AuthProvider }) {
       <Check label="Main PID" ok={monitor.mainPid !== null} value={monitor.mainPid?.toString() ?? "—"} />
     </div>
     <div className="info-grid status-info"><div><span className="info-label">Invocation ID</span><span>{monitor.invocationId || "—"}</span></div><div><span className="info-label">World path</span><span title={monitor.worldPath}>{monitor.worldPath || "—"}</span></div></div>
+
+    <div className="status-subsection">
+      <div className="status-panel-header">
+        <div>
+          <h4>Game Version & SteamCMD Update</h4>
+          <p className="muted">App ID 896660 (Valheim Dedicated Server)</p>
+        </div>
+        <div style={{ display: "flex", gap: "8px" }}>
+          <Btn variant="ghost" busy={versionChecking} onClick={checkVersion}>
+            Check for updates
+          </Btn>
+          <Btn
+            variant={monitor.updateAvailable ? "primary" : "ghost"}
+            busy={updateBusy}
+            disabled={active || updateBusy}
+            title={active ? "Stop the server first to update" : "Run SteamCMD update"}
+            onClick={runUpdate}
+          >
+            {updateBusy ? "Updating..." : "Update Game"}
+          </Btn>
+        </div>
+      </div>
+      <div className="health-grid">
+        <Check label="Installed Build" ok={Boolean(monitor.installedBuildId)} value={monitor.installedBuildId || "Unknown"} />
+        <Check label="Latest Steam Build" ok={Boolean(monitor.latestBuildId)} value={monitor.latestBuildId || "Not checked"} />
+        <Check
+          label="Version Status"
+          ok={!monitor.updateAvailable}
+          value={
+            monitor.updateAvailable
+              ? "Update Available"
+              : monitor.installedBuildId && monitor.latestBuildId
+              ? "Up to date"
+              : "Checking..."
+          }
+        />
+        <Check
+          label="Update Policy"
+          ok={!active}
+          value={active ? "Blocked (Server Active)" : "Ready (Stopped)"}
+        />
+      </div>
+      {active && (
+        <p className="config-msg" style={{ marginTop: "8px" }}>
+          ℹ️ Server is currently active. To update files safely without corruption, Stop the Valheim server first.
+        </p>
+      )}
+      {updateLog && (
+        <div style={{ marginTop: "12px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
+            <strong>SteamCMD Output:</strong>
+            <Btn variant="ghost" onClick={() => setUpdateLog(null)}>Dismiss</Btn>
+          </div>
+          <pre className="log-viewer" style={{ maxHeight: "200px" }}>{updateLog}</pre>
+        </div>
+      )}
+    </div>
 
     <div className="status-subsection"><div className="status-panel-header"><h4>Connected players ({monitor.connectedPlayers?.length ?? monitor.onlinePlayers?.length ?? 0})</h4></div>
       <div className="player-list">{(monitor.connectedPlayers?.length ?? 0) === 0 ? <p className="empty-inline">No players detected online</p> : monitor.connectedPlayers.map(player => <div className="player-row" key={player.steamId}><span>{player.online ? "🟢" : "🟡"} {player.name || "Loading character..."}</span><span className="muted">{player.steamId} · {player.online ? "Online" : "Connecting"}</span></div>)}</div>
