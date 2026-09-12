@@ -12,12 +12,14 @@ public class TailscaleMiddleware
     private readonly RequestDelegate _next;
     private readonly TailscaleSettings _settings;
     private readonly IPNetwork? _network;
+    private readonly ILogger<TailscaleMiddleware> _logger;
 
-    public TailscaleMiddleware(RequestDelegate next, IOptions<TailscaleSettings> options)
+    public TailscaleMiddleware(RequestDelegate next, IOptions<TailscaleSettings> options, ILogger<TailscaleMiddleware> logger)
     {
         _next = next;
         _settings = options.Value;
         _network = IPNetwork.TryParse(_settings.Subnet, out var n) ? n : null;
+        _logger = logger;
     }
 
     public async Task InvokeAsync(HttpContext context)
@@ -28,6 +30,7 @@ public class TailscaleMiddleware
             if (ip is null || !net.Contains(ip.MapToIPv6()))
             {
                 context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                _logger.LogWarning("Tailscale request rejected {HttpMethod} {RequestPath} {StatusCode}", context.Request.Method, context.Request.Path.Value ?? "", context.Response.StatusCode);
                 await context.Response.WriteAsync("Forbidden: request must come from Tailscale subnet.");
                 return;
             }

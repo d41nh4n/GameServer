@@ -1,8 +1,12 @@
+using Microsoft.Extensions.Logging;
+
 namespace GamePanel.Infrastructure.GameServers;
 
 /// <summary>System health metrics for PZ host: CPU, memory, disk, process status.</summary>
 public sealed class PzOpsService
 {
+    private readonly ILogger<PzOpsService> _logger;
+    public PzOpsService(ILogger<PzOpsService> logger) => _logger = logger;
     /// <summary>Returns aggregate host + process metrics for ops dashboard.</summary>
     public async Task<OpsMetrics> GetMetricsAsync(int pid = 0, CancellationToken ct = default)
     {
@@ -68,6 +72,7 @@ public sealed class PzOpsService
             catch { }
         }
 
+        _logger.LogInformation("PZ metrics snapshot {MetricEvent} {MetricType} {ProcessId} {CpuPercent} {HostMemPercent} {ProcessThreads} {ProcessVmRssKb} {ProcessVmSizeKb} {ProcessFds} {DiskCount}", true, "pz_process", pid, metrics.CpuPercent, metrics.HostMemPercent, metrics.ProcessThreads, metrics.ProcessVmRssKb, metrics.ProcessVmSizeKb, metrics.ProcessFds, metrics.Disks.Count);
         return metrics;
     }
 

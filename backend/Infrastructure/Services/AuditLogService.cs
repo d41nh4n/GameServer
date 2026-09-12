@@ -14,6 +14,8 @@ public static class AuditActions
     public const string CreateBackup = "CREATE_BACKUP";
     public const string AddMember = "ADD_MEMBER";
     public const string RemoveMember = "REMOVE_MEMBER";
+    public const string StatusCall = "STATUS_CALL";
+    public const string MetricCall = "METRIC_CALL";
 }
 
 public sealed class AuditLogService

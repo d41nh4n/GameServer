@@ -3,12 +3,15 @@ using System.Text.RegularExpressions;
 using GamePanel.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 
+using Microsoft.Extensions.Logging;
+
 namespace GamePanel.Infrastructure.Services;
 
 public sealed class ResourceMetricsService
 {
     private readonly AppDbContext _db;
-    public ResourceMetricsService(AppDbContext db) => _db = db;
+    private readonly ILogger<ResourceMetricsService> _logger;
+    public ResourceMetricsService(AppDbContext db, ILogger<ResourceMetricsService> logger) { _db = db; _logger = logger; }
 
     public async Task<ResourceOverview> GetOverviewAsync(CancellationToken ct = default)
     {
@@ -20,6 +23,9 @@ public sealed class ResourceMetricsService
             if (server.ProcessId is not > 0) { resources.Add(ServerResourceMetric.Offline(server.Id, server.Name, server.Status)); continue; }
             resources.Add(await ReadProcessAsync(server.Id, server.Name, server.Status, server.ProcessId.Value, ct));
         }
+        foreach (var metric in resources)
+            _logger.LogInformation("Resource metric {MetricEvent} {MetricType} {ServerId} {Status} {ProcessId} {Online} {CpuPercent} {MemoryRssKb} {Threads} {FileDescriptors}", true, "resource_server", metric.ServerId, metric.Status, metric.Pid, metric.Online, metric.CpuPercent, metric.MemoryRssKb, metric.Threads, metric.FileDescriptors);
+        _logger.LogInformation("Host metric {MetricEvent} {MetricType} {CpuPercent} {MemoryTotalKb} {MemoryUsedKb} {DiskCount} {GeneratedAtUtc}", true, "resource_host", host.CpuPercent, host.MemoryTotalKb, host.MemoryUsedKb, host.Disks.Count, DateTime.UtcNow);
         return new ResourceOverview(host, resources, DateTime.UtcNow);
     }
 

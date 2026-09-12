@@ -51,6 +51,14 @@ export class AuthProvider {
     return this.token;
   }
 
+  get isAdmin(): boolean {
+    try {
+      if (!this.token) return false;
+      const payload = JSON.parse(atob(this.token.split(".")[1].replaceAll("-", "+").replaceAll("_", "/")));
+      return payload.role === "Admin" || payload["http://schemas.microsoft.com/ws/2008/06/identity/claims/role"] === "Admin";
+    } catch { return false; }
+  }
+
   subscribe(fn: () => void) {
     this.listeners.push(fn);
     return () => {
@@ -217,10 +225,19 @@ export class AuthProvider {
   async valheimMemberAdd(id: string, role: string): Promise<any> { return this.request<any>("/api/valheim/members", { method: "POST", body: JSON.stringify({ id, role }) }); }
   async valheimMemberRemove(id: string, role: string): Promise<any> { return this.request<any>("/api/valheim/members", { method: "DELETE", body: JSON.stringify({ id, role }) }); }
   async valheimBackups(): Promise<any> { return this.request<any>("/api/valheim/backups"); }
+  async auditLogs(params: { serverId?: string; fromUtc?: string; toUtc?: string; type?: string; resultCode?: string; page?: number; pageSize?: number } = {}): Promise<{ items: any[]; total: number; page: number; pageSize: number; hasMore: boolean }> {
+    const query = new URLSearchParams(); Object.entries(params).forEach(([key, value]) => { if (value !== undefined && value !== "") query.set(key, String(value)); });
+    return this.request(`/api/audit?${query.toString()}`);
+  }
   async valheimCreateBackup(): Promise<any> { return this.request<any>("/api/valheim/backups", { method: "POST" }); }
   async valheimRollback(version: string): Promise<any> { return this.request<any>(`/api/valheim/backups/${encodeURIComponent(version)}/rollback`, { method: "POST" }); }
   async pzBackups(): Promise<any> { return this.request<any>("/api/pz/backups"); }
   async pzCreateBackup(): Promise<any> { return this.request<any>("/api/pz/backups", { method: "POST" }); }
   async pzRollback(version: string): Promise<any> { return this.request<any>(`/api/pz/backups/${encodeURIComponent(version)}/rollback`, { method: "POST" }); }
   async resourcesOverview(): Promise<any> { return this.request<any>("/api/resources/overview"); }
+  async metricStoreStatus(): Promise<any> { return this.request<any>("/api/observability/metrics"); }
+  async metricLogs(params: { serverId?: string; fromUtc?: string; toUtc?: string; metricType?: string; page?: number; pageSize?: number } = {}): Promise<{ items: any[]; total: number; page: number; pageSize: number; hasMore: boolean }> {
+    const query = new URLSearchParams(); Object.entries(params).forEach(([key, value]) => { if (value !== undefined && value !== "") query.set(key, String(value)); });
+    return this.request(`/api/observability/metrics/logs?${query.toString()}`);
+  }
 }

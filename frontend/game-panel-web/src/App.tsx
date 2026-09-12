@@ -6,10 +6,11 @@ import { ConnIndicator, Btn } from "./components/common";
 import LoginPage from "./components/auth/LoginPage";
 import ServerListView from "./components/servers/ServerListView";
 import ServerDetailView from "./components/servers/ServerDetailView";
+import MetricLogsView from "./components/servers/MetricLogsView";
 
 const API_BASE = "http://100.82.102.38:5000";
 const HUB_URL = `${API_BASE}/hubs/server`;
-type Page = "servers" | "detail";
+type Page = "servers" | "detail" | "metrics";
 
 export default function App() {
   const [auth] = useState(() => new AuthProvider());
@@ -85,7 +86,7 @@ export default function App() {
 
   if (!loggedIn) return <LoginPage onLogin={doLogin} />;
   return <div className="app-layout">
-    <nav className="navbar"><div className="nav-left"><span className="nav-brand" onClick={() => { setPage("servers"); setSelectedServer(null); }} style={{ cursor: "pointer" }}>🎮 <span className="nav-brand-text">Game Panel</span></span><div className="nav-links"><button className={`nav-link${page === "servers" ? " active" : ""}`} onClick={() => { setPage("servers"); setSelectedServer(null); }}>📊 Servers</button></div></div><div className="nav-right"><ConnIndicator status={connStatus} /><span className="header-user">{username}</span><Btn variant="ghost" onClick={doLogout}>Logout</Btn></div></nav>
-    <main className="app-main">{error && <div className="error-bar">{error}</div>}{page === "servers" ? <ServerListView servers={servers} error={error} loading={loading} resources={resources} onRefresh={fetchServers} onSelect={s => { setSelectedServer(s); setPage("detail"); }} /> : selectedServer ? <ServerDetailView server={selectedServer} auth={auth} loading={loading} resources={resources} onAction={action} onBack={() => { setPage("servers"); setSelectedServer(null); }} /> : null}</main>
+    <nav className="navbar"><div className="nav-left"><span className="nav-brand" onClick={() => { setPage("servers"); setSelectedServer(null); }} style={{ cursor: "pointer" }}>🎮 <span className="nav-brand-text">Game Panel</span></span><div className="nav-links"><button className={`nav-link${page === "servers" ? " active" : ""}`} onClick={() => { setPage("servers"); setSelectedServer(null); }}>📊 Servers</button><button className={`nav-link${page === "metrics" ? " active" : ""}`} onClick={() => { setPage("metrics"); setSelectedServer(null); }}>📈 Metrics</button></div></div><div className="nav-right"><ConnIndicator status={connStatus} /><span className="header-user">{username}</span><Btn variant="ghost" onClick={doLogout}>Logout</Btn></div></nav>
+    <main className="app-main">{error && <div className="error-bar">{error}</div>}{page === "servers" ? <ServerListView servers={servers} error={error} loading={loading} resources={resources} auth={auth} onRefresh={async () => { await fetchServers(); await fetchResources(); }} onSelect={s => { setSelectedServer(s); setPage("detail"); }} /> : page === "metrics" ? <MetricLogsView auth={auth} servers={servers} /> : selectedServer ? <ServerDetailView server={selectedServer} auth={auth} loading={loading} resources={resources} onAction={action} onBack={() => { setPage("servers"); setSelectedServer(null); }} /> : null}</main>
   </div>;
 }

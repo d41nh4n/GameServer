@@ -8,8 +8,9 @@ import WorldBackups from "./WorldBackups";
 import ServerResourceDetail from "./ServerResourceDetail";
 import ValheimSettings from "./ValheimSettings";
 import ValheimAdmin from "./ValheimAdmin";
+import AuditLogView from "./AuditLogView";
 
-type DetailTab = "controls" | "status" | "settings" | "admin" | "backups" | "logs" | "config" | "rcon" | "mods" | "sandbox";
+type DetailTab = "controls" | "status" | "settings" | "admin" | "backups" | "logs" | "audit" | "config" | "rcon" | "mods" | "sandbox";
 
 /* ═══════════ SERVER DETAIL VIEW ═══════════ */
 export default function ServerDetailView({ server, auth, loading, onAction, onBack, resources }: {
@@ -26,6 +27,7 @@ export default function ServerDetailView({ server, auth, loading, onAction, onBa
     ...(isValheim ? [{ id: "status" as DetailTab, label: "Status & Checks" }, { id: "settings" as DetailTab, label: "Game Settings" }, { id: "admin" as DetailTab, label: "Admin Control" }, { id: "backups" as DetailTab, label: "World Versions" }] : []),
     ...(isPZ ? [{ id: "backups" as DetailTab, label: "World Versions" }] : []),
     { id: "logs", label: "Logs" },
+    ...(auth.isAdmin ? [{ id: "audit" as DetailTab, label: "Audit" }] : []),
     ...(isPZ ? [
       { id: "config" as DetailTab, label: "Config" },
       { id: "rcon" as DetailTab, label: "RCON" },
@@ -64,6 +66,7 @@ export default function ServerDetailView({ server, auth, loading, onAction, onBa
         {tab === "admin" && isValheim && <ValheimAdmin serverId={server.id} auth={auth} serverStatus={server.status} />}
         {tab === "backups" && (isValheim || isPZ) && <WorldBackups gameType={isValheim ? "Valheim" : "ProjectZomboid"} auth={auth} serverStatus={server.status} />}
         {tab === "logs" && (isValheim ? <ValheimLogs auth={auth} /> : <DetailLogs server={server} auth={auth} />)}
+        {tab === "audit" && <AuditLogView auth={auth} serverId={server.id} />}
         {tab === "config" && isPZ && <DetailConfig auth={auth} />}
         {tab === "rcon" && isPZ && <DetailRcon auth={auth} />}
         {tab === "mods" && isPZ && <DetailMods auth={auth} />}

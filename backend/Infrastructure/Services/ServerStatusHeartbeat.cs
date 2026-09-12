@@ -17,6 +17,7 @@ public sealed class ServerStatusHeartbeat : BackgroundService
     private readonly ILogger<ServerStatusHeartbeat> _logger;
     private readonly IHubContext<ServerHub> _hub;
     private bool _snapshotPersistenceAvailable = true;
+    private readonly Dictionary<Guid, string> _lastStatusKeys = new();
     public ServerStatusHeartbeat(IServiceScopeFactory scopeFactory, ILogger<ServerStatusHeartbeat> logger, IHubContext<ServerHub> hub)
     {
         _scopeFactory = scopeFactory;
@@ -42,6 +43,12 @@ public sealed class ServerStatusHeartbeat : BackgroundService
             var now = DateTime.UtcNow;
             foreach (var server in servers)
             {
+                var statusKey = $"{server.Status}:{server.Ready}:{server.ProcessId}";
+                if (!_lastStatusKeys.TryGetValue(server.Id, out var previousKey) || previousKey != statusKey)
+                {
+                    _lastStatusKeys[server.Id] = statusKey;
+                    _logger.LogInformation("Server status heartbeat changed {MetricEvent} {MetricType} {ServerId} {Status} {Ready} {ProcessId} {ObservedAtUtc}", true, "status_heartbeat", server.Id, server.Status, server.Ready, server.ProcessId, now);
+                }
                 if (_snapshotPersistenceAvailable)
                 {
                     try

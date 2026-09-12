@@ -330,6 +330,22 @@ body {
 /* ─── action buttons ─── */
 .action-btns { display: flex; gap: 10px; }
 
+/* ─── audit log ─── */
+.metric-log-screen { display: grid; gap: 16px; }
+.page-heading, .metric-query-bar, .metric-log-summary, .metric-pagination { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; justify-content: space-between; }
+.metric-query-bar { justify-content: flex-start; padding: 14px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; }
+.metric-query-bar label, .metric-log-summary label { display: grid; gap: 5px; color: var(--text-muted); font-size: 12px; }
+.metric-query-bar input, .metric-query-bar select, .metric-log-summary select { min-height: 36px; padding: 7px 9px; color: var(--text); background: var(--bg-input); border: 1px solid var(--border); border-radius: 7px; }
+.metric-log-table { overflow-x: auto; background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; }
+.metric-log-head, .metric-log-row { min-width: 980px; display: grid; grid-template-columns: 170px 150px 180px 120px 90px 90px 120px 110px; gap: 10px; padding: 11px 14px; align-items: center; }
+.metric-log-head { color: var(--text-muted); font-size: 11px; text-transform: uppercase; border-bottom: 1px solid var(--border); }
+.metric-log-row { color: var(--text); font-size: 13px; border-bottom: 1px solid var(--border-subtle); }
+.metric-log-row:last-child { border-bottom: 0; }
+.metric-pagination { justify-content: center; }
+.audit-list { display: grid; gap: 8px; margin-top: 14px; overflow-x: auto; }
+.audit-row { display: grid; grid-template-columns: 150px 150px 150px 120px minmax(240px, 1fr); gap: 10px; align-items: center; min-width: 820px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); font-size: 0.82rem; }
+.audit-ok { color: #7ee787; } .audit-fail { color: #ff7b72; }
+
 /* ─── log viewer ─── */
 .log-viewer {
   background: #0a0b0f; border: 1px solid var(--border); border-radius: var(--radius-sm);

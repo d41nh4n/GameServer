@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text;
 using System.Security.Claims;
 using GamePanel.Api;
@@ -18,8 +19,35 @@ using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Primitives;
 using Microsoft.IdentityModel.Tokens;
+using Serilog;
+using Serilog.Formatting.Compact;
+using Serilog.Events;
+using Serilog.Sinks.Elasticsearch;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Host.UseSerilog((_, _, logger) =>
+{
+    logger.MinimumLevel.Information()
+        .MinimumLevel.Override("Microsoft.EntityFrameworkCore", LogEventLevel.Warning)
+        .MinimumLevel.Override("Microsoft.AspNetCore.Hosting.Diagnostics", LogEventLevel.Warning)
+        .Enrich.FromLogContext()
+        .WriteTo.Console(new RenderedCompactJsonFormatter());
+    var enabled = builder.Configuration.GetValue<bool>("Observability:Elasticsearch:Enabled");
+    var endpoint = builder.Configuration["Observability:Elasticsearch:Uri"];
+    if (enabled && Uri.TryCreate(endpoint, UriKind.Absolute, out var uri) && (uri.Scheme == Uri.UriSchemeHttps || (uri.Scheme == Uri.UriSchemeHttp && uri.IsLoopback)))
+    {
+        logger.WriteTo.Logger(metrics => metrics
+            .Filter.ByIncludingOnly(e => e.Properties.ContainsKey("MetricEvent"))
+            .WriteTo.Elasticsearch(new ElasticsearchSinkOptions(uri)
+            {
+                IndexFormat = "gamepanel-metrics-{0:yyyy.MM.dd}",
+                AutoRegisterTemplate = true,
+                NumberOfShards = 1,
+                NumberOfReplicas = 0,
+                FailureCallback = (e, ex) => Console.Error.WriteLine("Elasticsearch metric sink failed: " + e.MessageTemplate.Text),
+            }));
+    }
+});
 
 // Options models đọc từ appsettings
 builder.Services.Configure<JwtSettings>(builder.Configuration.GetSection(JwtSettings.Section));
@@ -96,7 +124,9 @@ builder.Services.AddScoped<ValheimMonitoringService>();
 builder.Services.AddScoped<AuditLogService>();
 builder.Services.AddScoped<SystemEventService>();
 builder.Services.AddScoped<ResourceMetricsService>();
+builder.Services.AddSingleton<MetricObservabilityService>();
 builder.Services.AddScoped<ValheimSettingsApplyService>();
+builder.Services.AddHostedService<AuditLogRetentionService>();
 builder.Services.AddSingleton<IGameControlProtocol>(sp =>
 {
     var config = sp.GetRequiredService<IConfiguration>();
@@ -261,13 +291,48 @@ using (var scope = app.Services.CreateScope())
 }
 
 // Middleware pipeline: Routing → CORS → Tailscale (tùy chọn) → Auth → Authorization
+app.UseSerilogRequestLogging(options =>
+{
+    options.EnrichDiagnosticContext = (diagnostics, http) =>
+    {
+        diagnostics.Set("HttpMethod", http.Request.Method);
+        diagnostics.Set("RequestPath", http.Request.Path.Value ?? "");
+        diagnostics.Set("StatusCode", http.Response.StatusCode);
+    };
+});
+app.UseMiddleware<GlobalErrorMiddleware>();
 app.UseRouting();
 app.UseCors("AllowReact");
 app.UseRateLimiter();
 app.UseMiddleware<TailscaleMiddleware>();
 app.UseAuthentication();
 app.UseAuthorization();
-app.MapOpenApi();
+app.Use(async (context, next) =>
+{
+    var shouldAudit = HttpMethods.IsGet(context.Request.Method) && context.Request.Path.StartsWithSegments("/api");
+    var stopwatch = shouldAudit ? Stopwatch.StartNew() : null;
+    try { await next(); }
+    finally
+    {
+        if (shouldAudit && stopwatch is not null)
+        {
+            try
+            {
+            Guid? serverId = null;
+            var segments = context.Request.Path.Value?.Split('/', StringSplitOptions.RemoveEmptyEntries) ?? [];
+            if (segments.Length >= 3 && segments[0].Equals("api", StringComparison.OrdinalIgnoreCase) && segments[1].Equals("servers", StringComparison.OrdinalIgnoreCase) && Guid.TryParse(segments[2], out var parsed))
+                serverId = parsed;
+            using var scope = context.RequestServices.CreateScope();
+            var audit = scope.ServiceProvider.GetRequiredService<AuditLogService>();
+            var isMetricCall = context.Request.Path.StartsWithSegments("/api/resources") || context.Request.Path.StartsWithSegments("/api/observability/metrics");
+            var action = isMetricCall ? AuditActions.MetricCall : AuditActions.StatusCall;
+            await audit.RecordAsync(context.User, action, serverId, context.Response.StatusCode < 400, $"HTTP_{context.Response.StatusCode}", new { method = context.Request.Method, path = context.Request.Path.Value, statusCode = context.Response.StatusCode, durationMs = stopwatch.ElapsedMilliseconds });
+        }
+        catch { /* Observability must not change the API response. */ }
+    }
+    }
+    });
+    app.MapOpenApi();
 
 app.MapHub<ServerHub>("/hubs/server", opts =>
 {
@@ -656,12 +721,39 @@ app.MapGet("/api/resources/overview", async (ResourceMetricsService resources, C
     catch (Exception e) { return Results.Problem(e.Message); }
 }).RequireAuthorization("authenticated");
 
-app.MapGet("/api/audit", async (Guid? serverId, int? limit, AppDbContext db) =>
+app.MapGet("/api/observability/metrics", async (MetricObservabilityService metrics, CancellationToken ct) => Results.Ok(await metrics.GetStatusAsync(ct)))
+    .RequireAuthorization("authenticated");
+
+app.MapGet("/api/observability/metrics/logs", async (Guid? serverId, DateTime? fromUtc, DateTime? toUtc, string? metricType, int? page, int? pageSize, MetricObservabilityService metrics, CancellationToken ct) =>
 {
-    var take = Math.Clamp(limit ?? 100, 1, 500);
-    var query = db.AuditLogs.AsNoTracking().OrderByDescending(x => x.CreatedAtUtc).AsQueryable();
-    if (serverId.HasValue) query = query.Where(x => x.ServerInstanceId == serverId.Value).OrderByDescending(x => x.CreatedAtUtc);
-    return Results.Ok(await query.Take(take).ToListAsync());
+    if (fromUtc.HasValue && toUtc.HasValue && fromUtc > toUtc) return Results.BadRequest(new { error = "fromUtc must be earlier than or equal to toUtc" });
+    var allowed = new[] { "resource_server", "resource_host", "status_heartbeat", "pz_process" };
+    if (!string.IsNullOrWhiteSpace(metricType) && !allowed.Contains(metricType, StringComparer.Ordinal)) return Results.BadRequest(new { error = "Unsupported metricType" });
+    try { return Results.Ok(await metrics.QueryAsync(serverId, fromUtc, toUtc, metricType, Math.Clamp(page ?? 1, 1, 100000), Math.Clamp(pageSize ?? 50, 1, 200), ct)); }
+    catch (HttpRequestException) { return Results.StatusCode(StatusCodes.Status503ServiceUnavailable); }
+}).RequireAuthorization("authenticated");
+
+app.MapGet("/api/audit", async (Guid? serverId, DateTime? fromUtc, DateTime? toUtc, string? type, string? resultCode, int? page, int? pageSize, int? limit, AppDbContext db) =>
+{
+    if (fromUtc.HasValue && toUtc.HasValue && fromUtc.Value > toUtc.Value)
+        return Results.BadRequest(new { error = "fromUtc must be earlier than or equal to toUtc" });
+    var query = db.AuditLogs.AsNoTracking().AsQueryable();
+    if (serverId.HasValue) query = query.Where(x => x.ServerInstanceId == serverId.Value);
+    if (fromUtc.HasValue) query = query.Where(x => x.CreatedAtUtc >= fromUtc.Value.ToUniversalTime());
+    if (toUtc.HasValue) query = query.Where(x => x.CreatedAtUtc < toUtc.Value.ToUniversalTime());
+    if (!string.IsNullOrWhiteSpace(type)) query = query.Where(x => x.Action == type);
+    if (!string.IsNullOrWhiteSpace(resultCode)) query = query.Where(x => x.ResultCode == resultCode);
+    var paged = page.HasValue || pageSize.HasValue || serverId.HasValue || fromUtc.HasValue || toUtc.HasValue || !string.IsNullOrWhiteSpace(type) || !string.IsNullOrWhiteSpace(resultCode);
+    if (!paged)
+    {
+        var legacyItems = await query.OrderByDescending(x => x.CreatedAtUtc).Take(Math.Clamp(limit ?? 100, 1, 500)).ToListAsync();
+        return Results.Ok(legacyItems);
+    }
+    var currentPage = Math.Clamp(page ?? 1, 1, 100000);
+    var size = Math.Clamp(pageSize ?? limit ?? 50, 1, 200);
+    var total = await query.CountAsync();
+    var items = await query.OrderByDescending(x => x.CreatedAtUtc).Skip((currentPage - 1) * size).Take(size).ToListAsync();
+    return Results.Ok(new { items, total, page = currentPage, pageSize = size, hasMore = currentPage * size < total });
 }).RequireAuthorization("admin");
 
 app.MapGet("/api/events", async (Guid? serverId, int? limit, SystemEventService events) =>
