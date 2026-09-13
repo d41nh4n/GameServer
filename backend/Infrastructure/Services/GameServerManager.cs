@@ -69,7 +69,7 @@ public class GameServerManager : IGameServerRuntime
 
     public async Task<IEnumerable<ServerInstance>> RefreshActiveAsync(CancellationToken ct = default)
     {
-        var servers = await _db.ServerInstances.Where(x => x.Status != ServerStatus.Stopped).OrderBy(x => x.Name).ToListAsync(ct);
+        var servers = (await _db.ServerInstances.OrderBy(x => x.Name).ToListAsync(ct));
         var changed = false;
         foreach (var server in servers)
         {

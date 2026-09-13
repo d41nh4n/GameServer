@@ -69,6 +69,25 @@ public sealed class GameServerManagerAdoptionTests : IDisposable
     }
 
     [Fact]
+    public async Task RefreshActive_ReconcilesRunningServiceWhenDatabaseWasStopped()
+    {
+        var adapter = new FakeAdapter
+        {
+            Inspection = new(GameServerStatus.Running, 4242, true),
+        };
+        await using var db = await CreateDb();
+        var server = Instance(ServerStatus.Stopped);
+        db.ServerInstances.Add(server);
+        await db.SaveChangesAsync();
+        var manager = CreateManager(db, adapter);
+
+        var result = (await manager.RefreshActiveAsync()).Single();
+
+        Assert.Equal(ServerStatus.Running, result.Status);
+        Assert.Equal(4242, result.ProcessId);
+        Assert.True(result.Ready);
+    }
+    [Fact]
     public async Task FailedStart_DoesNotRemainStarting()
     {
         var adapter = new FakeAdapter();
