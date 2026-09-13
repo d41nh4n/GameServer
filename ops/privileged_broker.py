@@ -217,7 +217,7 @@ class Broker:
   if action=="status": return {"ok":True,"status":self.controller.status(req["instanceId"])}
   if action in {"start","stop","restart"}:
    self.peer(True); self.replay_check(req["requestId"],True)
-   if req["instanceId"]!="valheim-plugin-compat": return {"ok":False,"error":"lifecycle disabled in Phase 3B.1"}
+   if req["instanceId"] not in self.cfg["instances"] or not self.cfg["instances"][req["instanceId"]]["service"]: fail("lifecycle instance is not configured")
    if action=="stop": self.controller.stop(req["instanceId"])
    elif action=="start": self.controller.start(req["instanceId"])
    else: self.controller.stop(req["instanceId"]); self.controller.start(req["instanceId"])

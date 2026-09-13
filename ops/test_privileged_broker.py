@@ -57,7 +57,10 @@ class Tests(unittest.TestCase):
   c=C(); q=self.deployed(c); self.b.handle(q); r=self.req('rollback'); self.assertEqual(self.b.handle(r)['state'],'rolled-back'); self.assertEqual(self.b.handle(self.req('rollback'))['state'],'rolled-back')
  def test_interrupted_transaction_recovery_blocks(self):
   c=C(); q=self.deployed(c); p=self.back/self.did; p.mkdir(parents=True); (p/'transaction.json').write_text(json.dumps({'state':'applying'})); self.b.enabled=True; self.assertRaises(BrokerError,self.b.handle,{**q,'requestId':str(uuid.uuid4())})
+ def test_production_lifecycle_uses_fixed_controller(self):
+  c=C(); self.b.controller=c; result=self.b.handle(self.req('start')); self.assertTrue(result['ok']); self.assertEqual(c.started,1); self.assertEqual(self.b.handle(self.req('stop'))['state'],'stop')
  def test_pz_mapping_unchanged(self): self.assertEqual(self.cfg['instances']['pz-main']['service'],'pz'); self.assertRaises(BrokerError,self.b.handle,{**self.req('deploy'),'instanceId':'pz-main'})
+
  def test_platform_excluded_is_recorded(self): self.assertEqual(self.base['platformExcluded'][0]['reason'],'platform-excluded')
 
 if __name__=='__main__': unittest.main(verbosity=2)
