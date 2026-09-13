@@ -6,9 +6,15 @@
     "valheim-plugin-compat": {"service": "", "root": "/srv/gamepanel/labs/valheim-plugin-compat", "ports": [2466, 2467], "testedBuild": "25253791"},
     "pz-main": {"service": "pzserver-game.service", "root": "/home/pzserver", "ports": [16261], "testedBuild": ""}
   },
+  "backendUser": "gamepanel",
   "paths": {
     "productionDeployments": "/srv/gamepanel/instances/valheim-main/mods/deployments",
     "productionMods": "/srv/gamepanel/instances/valheim-main/mods/packages",
-    "productionBackup": "/srv/gamepanel/instances/valheim-main/backups/mod-deployments"
+    "productionBackup": "/srv/gamepanel/instances/valheim-main/backups/mod-deployments",
+    "stagingRoot": "/srv/gamepanel/instances/valheim-main/mods/staging",
+    "brokerState": "/srv/gamepanel/instances/valheim-main/backups/mod-deployments/broker-state"
+  },
+  "features": {
+    "productionDeploymentEnabled": false
   }
 }

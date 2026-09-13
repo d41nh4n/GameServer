@@ -1,123 +1,29 @@
 #!/usr/bin/env python3
-import hashlib, json, os, posixpath, pwd, re, shutil, socket, stat, subprocess, tempfile, threading, time, zipfile
+import json, os, pwd, socket, struct, sys, threading
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from privileged_broker import Broker, load_config
 
-CONFIG = Path('/etc/gamepanel/privileged.json')
-SOCKET = Path('/run/gamepanel/privileged.sock')
-ACTIONS = {'status', 'start', 'stop', 'restart', 'deploy', 'rollback'}
-INSTANCES = {'valheim-main': 'valheim-main.service', 'valheim-plugin-compat': '', 'pz-main': 'pzserver-game.service'}
-ID_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$')
-ROUTES = ('BepInEx/plugins/', 'BepInEx/config/', 'BepInEx/patchers/', 'BepInEx/monomod/')
-MAX_ARCHIVE = 256 * 1024 * 1024
-MAX_FILES = 4096
-MAX_CONNECTIONS = 4
+SOCKET=Path('/run/gamepanel/privileged.sock'); CONFIG=Path('/etc/gamepanel/privileged.json'); MAX=65536
 
-def fail(message): raise ValueError(message)
-def load_config():
-    with CONFIG.open() as f: return json.load(f)
-
-def validate_request(req):
-    if set(req) != {'requestVersion','requestId','action','instanceId','deploymentId'}: fail('request fields are not allowlisted')
-    if req['requestVersion'] != 1 or not isinstance(req['requestId'], str) or not re.fullmatch(r'[0-9a-fA-F-]{36}', req['requestId']): fail('invalid request envelope')
-    if req['action'] not in ACTIONS or req['instanceId'] not in INSTANCES: fail('action or instance is not allowlisted')
-    if not isinstance(req['deploymentId'], str) or not ID_RE.fullmatch(req['deploymentId']): fail('invalid deploymentId')
-
-def unit(cfg, instance):
-    service = INSTANCES[instance]
-    if not service: fail('instance has no configured systemd service')
-    return {'service': service}
-
-def systemctl(service, action):
-    if action == 'status':
-        p = subprocess.run(['/usr/bin/systemctl','show',service,'--property=ActiveState','--property=SubState','--property=MainPID','--property=InvocationID','--no-pager'], text=True, capture_output=True, timeout=30)
-        if p.returncode: fail('systemd status query failed')
-        return dict(line.split('=',1) for line in p.stdout.splitlines() if '=' in line)
-    p = subprocess.run(['/usr/bin/systemctl', action, service], text=True, capture_output=True, timeout=180)
-    if p.returncode: fail(f'systemd {action} failed')
-    return {'action': action, 'success': True}
-
-def safe_name(name):
-    if not name or '\\' in name or '\x00' in name or name.startswith('/') or (len(name)>1 and name[1]==':'): fail('unsafe archive path')
-    n = posixpath.normpath(name)
-    if n == '..' or n.startswith('../'): fail('path traversal')
-    return n
-
-def validate_deployment(cfg, did):
-    root = Path(cfg['paths']['productionDeployments']) / did
-    if root.is_symlink() or not root.is_dir(): fail('deployment not found')
-    manifest = root / 'manifest.json'; archive = root / 'package.zip'
-    if manifest.is_symlink() or archive.is_symlink() or not manifest.is_file() or not archive.is_file(): fail('deployment artifact missing or symlinked')
-    if archive.stat().st_size > MAX_ARCHIVE: fail('deployment archive limit exceeded')
-    data = json.loads(manifest.read_text())
-    if set(data) != {'packageId','version','source','target','enabled','dependencies','files','sha256','testedGameBuild','labTested'}: fail('manifest schema mismatch')
-    if not isinstance(data['packageId'], str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{1,127}', data['packageId']): fail('invalid packageId')
-    if not isinstance(data['version'], str) or not re.fullmatch(r'[0-9A-Za-z][0-9A-Za-z.+_-]{0,63}', data['version']): fail('invalid version')
-    if data['source'] not in {'thunderstore','local'} or data['target'] not in {'server-only','client-only','client-server'}: fail('invalid source or target')
-    if not isinstance(data['enabled'], bool) or not isinstance(data['labTested'], bool): fail('invalid enabled/labTested')
-    if not isinstance(data['dependencies'], list) or len(data['dependencies']) > 128 or len(set(data['dependencies'])) != len(data['dependencies']) or not all(isinstance(x, str) and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{1,127}@[0-9A-Za-z][0-9A-Za-z.+_-]{0,63}', x) for x in data['dependencies']): fail('invalid dependencies')
-    if not isinstance(data['files'], list) or len(data['files']) > MAX_FILES or len(set(data['files'])) != len(data['files']) or not all(isinstance(x, str) and 0 < len(x) <= 512 and any(x.startswith(r) for r in ROUTES) and safe_name(x) == x for x in data['files']): fail('invalid files')
-    if not re.fullmatch(r'[0-9]{1,20}', str(data['testedGameBuild'])) or not re.fullmatch(r'[a-fA-F0-9]{64}', data['sha256']): fail('invalid build or hash')
-    if data['labTested'] is not True: fail('deployment is not lab-tested')
-    if data['testedGameBuild'] != cfg['instances']['valheim-main']['testedBuild']: fail('tested Valheim build mismatch')
-    with zipfile.ZipFile(archive) as z:
-        if len(z.infolist()) > MAX_FILES: fail('deployment archive file-count limit exceeded')
-        names = set(); seen = set(); manifest_count = 0; manifest_bytes = None; uncompressed = 0
-        for info in z.infolist():
-            name = safe_name(info.filename)
-            if name != info.filename.rstrip('/'): fail('non-canonical archive path')
-            if name in seen: fail('duplicate archive path')
-            seen.add(name)
-            uncompressed += info.file_size
-            if uncompressed > 512 * 1024 * 1024: fail('deployment uncompressed size limit exceeded')
-            if name == 'manifest.json' and not info.is_dir(): manifest_count += 1; manifest_bytes = z.read(info)
-            mode = (info.external_attr >> 16) & 0xffff
-            if stat.S_ISLNK(mode) or (name != 'manifest.json' and not any((name + '/').startswith(r) for r in ROUTES)): fail('archive route or symlink rejected')
-            if not info.is_dir() and name != 'manifest.json': names.add(name)
-        if manifest_count != 1 or manifest_bytes is None: fail('archive must contain exactly one manifest.json')
-        if json.loads(manifest_bytes) != data: fail('archive manifest does not match approved manifest')
-        declared = set(data['files'])
-        if declared != names: fail('manifest files do not match archive')
-        digest = hashlib.sha256()
-        for name in sorted(names):
-            digest.update(name.encode('utf-8') + b'\0'); digest.update(z.read(name))
-        if digest.hexdigest().lower() != data['sha256'].lower(): fail('deployment payload hash mismatch')
-    return root, archive
-
-def handle(req, cfg):
-    validate_request(req)
-    if req['action'] == 'status':
-        service = INSTANCES[req['instanceId']]
-        return {'ok': True, 'instanceId': req['instanceId'], 'status': systemctl(service, 'status') if service else {'configured': False}}
-    if req['action'] in {'start','stop','restart'}: return {'ok': True, 'instanceId': req['instanceId'], 'result': systemctl(unit(cfg, req['instanceId'])['service'], req['action'])}
-    if req['action'] in {'deploy','rollback'}: fail('deploy/rollback requires an approved deployment artifact and is disabled until a deployment workflow is enabled')
-    fail('unsupported action')
-
-def handle_connection(conn, cfg, slots):
-    try:
-        conn.settimeout(10); chunks = []; total = 0
-        while total < 65536:
-            chunk = conn.recv(min(4096, 65536 - total))
-            if not chunk: break
-            chunks.append(chunk); total += len(chunk)
-            if b'\n' in chunk: break
-        raw = b''.join(chunks)
-        if total >= 65536 and b'\n' not in raw: fail('request too large or incomplete')
-        req = json.loads(raw.decode('utf-8')); result = handle(req, cfg)
-        result.update({'requestId': req['requestId'], 'action': req['action'], 'instanceId': req['instanceId'], 'deploymentId': req['deploymentId']})
-    except Exception as exc:
-        result = {'ok': False, 'error': str(exc)[:300]}
-    try: conn.sendall((json.dumps(result, separators=(',',':'))+'\n').encode())
-    except OSError: pass
-    finally:
-        slots.release(); conn.close()
-
+def peer_uid(conn):
+ return struct.unpack('3i',conn.getsockopt(socket.SOL_SOCKET,socket.SO_PEERCRED,12))[1]
+def serve(conn,cfg):
+ try:
+  conn.settimeout(10); raw=b''
+  while len(raw)<MAX:
+   b=conn.recv(min(4096,MAX-len(raw))); raw+=b
+   if b'\n' in b: break
+  if b'\n' not in raw: raise ValueError('incomplete or oversized request')
+  req=json.loads(raw.split(b'\n',1)[0]); uid=peer_uid(conn); result=Broker(cfg,uid=uid).handle(req)
+  result.update({'requestId':req['requestId'],'action':req['action'],'instanceId':req['instanceId'],'deploymentId':req['deploymentId']})
+ except Exception as e:
+  result={'ok':False,'error':str(e)[:300]}
+ try: conn.sendall((json.dumps(result,separators=(',',':'))+'\n').encode())
+ finally: conn.close()
 def main():
-    cfg = load_config(); SOCKET.parent.mkdir(mode=0o755, exist_ok=True); os.chown(SOCKET.parent, 0, pwd.getpwnam('gamepanel').pw_gid); os.chmod(SOCKET.parent, 0o750); SOCKET.unlink(missing_ok=True)
-    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM); server.bind(str(SOCKET)); os.chmod(SOCKET, 0o660); os.chown(SOCKET, 0, pwd.getpwnam('gamepanel').pw_gid); server.listen(8)
-    slots = threading.BoundedSemaphore(MAX_CONNECTIONS)
-    while True:
-        conn, _ = server.accept()
-        if not slots.acquire(blocking=False): conn.close(); continue
-        threading.Thread(target=handle_connection, args=(conn, cfg, slots), daemon=True).start()
-
-if __name__ == '__main__': main()
+ cfg=load_config(CONFIG); SOCKET.parent.mkdir(mode=0o750,exist_ok=True); os.chown(SOCKET.parent,0,pwd.getpwnam('gamepanel').pw_gid); os.chmod(SOCKET.parent,0o750); SOCKET.unlink(missing_ok=True)
+ s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM); s.bind(str(SOCKET)); os.chown(SOCKET,0,pwd.getpwnam('gamepanel').pw_gid); os.chmod(SOCKET,0o660); s.listen(8)
+ while True:
+  c,_=s.accept(); threading.Thread(target=serve,args=(c,cfg),daemon=True).start()
+if __name__=='__main__': main()
