@@ -10,6 +10,7 @@ VER_RE=re.compile(r"^[0-9A-Za-z][0-9A-Za-z.+_-]{0,63}$")
 HASH_RE=re.compile(r"^[0-9a-fA-F]{64}$")
 PACKAGE_TYPES={"loader","plugin","mod"}
 ROUTES=("BepInEx/plugins/","BepInEx/config/","BepInEx/core/","BepInEx/patchers/","BepInEx/monomod/","doorstop_libs/")
+LOADER_ROOT_FILES={".doorstop_version","doorstop_config.ini","libdoorstop.so","start_game_bepinex.sh","start_server_bepinex.sh","changelog.txt"}
 
 class BrokerError(ValueError): pass
 
@@ -65,7 +66,7 @@ class LocalController:
 class Broker:
  def __init__(self,cfg,controller=None,uid=None):
   self.cfg=cfg; self.controller=controller or LocalController(cfg); self.uid=uid if uid is not None else os.getuid()
-  self.backend_uid=cfg.get("backendUid",pwd.getpwnam(cfg.get("backendUser","gamepanel")).pw_uid); self.valheim_uid=cfg.get("valheimUid",pwd.getpwnam("valheim").pw_uid)
+  self.backend_uid=cfg.get("backendUid",pwd.getpwnam(cfg.get("backendUser","gamepanel")).pw_uid); self.valheim_gid=cfg.get("valheimGid",pwd.getpwnam("valheim").pw_gid)
   self.state=Path(cfg["paths"].get("brokerState",cfg["paths"]["productionBackup"]+"/broker-state")); self.state.mkdir(parents=True,exist_ok=True)
   self.replay=self.state/"request-ids.json"; self.lock_path=self.state/"broker.lock"; self.audit_path=self.state/"audit.jsonl"
   self.recovery_required=any(json.loads(p.read_text()).get("state") in {"prepared","applying"} for p in self.state.parent.glob("*/transaction.json") if p.is_file())
@@ -104,7 +105,7 @@ class Broker:
    if not isinstance(x,dict) or set(x)!={"source","destination","sha256"}: fail("file entry invalid")
    rel=safe_rel(x["destination"]); src=under(root/"normalized",root/"normalized"/safe_rel(x["source"]))
    if not src.is_file() or src.is_symlink() or not HASH_RE.fullmatch(x["sha256"]): fail("source/hash invalid")
-   if not any(rel.startswith(r) for r in ROUTES): fail("route not allowlisted")
+   if not any(rel.startswith(r) for r in ROUTES) and not (d["packageType"]=="loader" and rel in LOADER_ROOT_FILES): fail("route not allowlisted")
    if digest(src).lower()!=x["sha256"].lower(): fail("file hash mismatch")
    items.append({"destination":rel,"sha256":x["sha256"].lower(),"sizeBytes":src.stat().st_size})
   if len({x["destination"] for x in items})!=len(items): fail("duplicate files")
@@ -124,8 +125,8 @@ class Broker:
    (tmp/"manifest.json").write_bytes(mp.read_bytes()); (tmp/"approval.json").write_bytes(canonical_bytes(approval)+b"\n"); fsync_file(tmp/"manifest.json"); fsync_file(tmp/"approval.json"); fsync_dir(tmp); os.chmod(tmp,0o750); os.rename(tmp,final); fsync_dir(final.parent)
    if os.geteuid()==0:
     for dp,ds,fs in os.walk(final):
-     os.chown(dp,0,self.valheim_uid,follow_symlinks=False); os.chmod(dp,0o750)
-     for n in fs: os.chown(Path(dp)/n,0,self.valheim_uid,follow_symlinks=False); os.chmod(Path(dp)/n,0o640)
+     os.chown(dp,0,self.valheim_gid,follow_symlinks=False); os.chmod(dp,0o750)
+     for n in fs: os.chown(Path(dp)/n,0,self.valheim_gid,follow_symlinks=False); os.chmod(Path(dp)/n,0o640)
    else:
     for dp,ds,fs in os.walk(final):
      os.chmod(dp,0o750)

@@ -9,16 +9,20 @@ SOCKET=Path('/run/gamepanel/privileged.sock'); CONFIG=Path('/etc/gamepanel/privi
 def peer_uid(conn):
  return struct.unpack('3i',conn.getsockopt(socket.SOL_SOCKET,socket.SO_PEERCRED,12))[1]
 def serve(conn,cfg):
+ req=None
  try:
   conn.settimeout(10); raw=b''
   while len(raw)<MAX:
    b=conn.recv(min(4096,MAX-len(raw))); raw+=b
    if b'\n' in b: break
   if b'\n' not in raw: raise ValueError('incomplete or oversized request')
-  req=json.loads(raw.split(b'\n',1)[0]); uid=peer_uid(conn); result=Broker(cfg,uid=uid).handle(req)
-  result.update({'requestId':req['requestId'],'action':req['action'],'instanceId':req['instanceId'],'deploymentId':req['deploymentId']})
+  line,tail=raw.split(b'\n',1)
+  if tail: raise ValueError('trailing bytes after request frame')
+  req=json.loads(line.decode('utf-8')); uid=peer_uid(conn); result=Broker(cfg,uid=uid).handle(req)
  except Exception as e:
   result={'ok':False,'error':str(e)[:300]}
+ if isinstance(req,dict):
+  result.update({k:req.get(k) for k in ('requestId','action','instanceId','deploymentId')})
  try: conn.sendall((json.dumps(result,separators=(',',':'))+'\n').encode())
  finally: conn.close()
 def main():
