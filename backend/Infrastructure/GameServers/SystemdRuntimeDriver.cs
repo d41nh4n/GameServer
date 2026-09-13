@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 namespace GamePanel.Infrastructure.GameServers;
 
 public enum SystemdControlAction
@@ -46,15 +48,18 @@ public sealed class SystemdRuntimeDriver : ISystemdRuntimeDriver
     private readonly ICommandRunner _runner;
     private readonly IReadOnlyDictionary<string, SystemdUnitDefinition> _units;
     private readonly TimeSpan _commandTimeout;
+    private readonly PrivilegedBrokerClient? _broker;
 
     public SystemdRuntimeDriver(
         ICommandRunner runner,
         IEnumerable<SystemdUnitDefinition> units,
-        TimeSpan? commandTimeout = null)
+        TimeSpan? commandTimeout = null,
+        PrivilegedBrokerClient? broker = null)
     {
         _runner = runner;
         _units = units.ToDictionary(x => x.UnitName, StringComparer.Ordinal);
         _commandTimeout = commandTimeout ?? TimeSpan.FromSeconds(30);
+        _broker = broker;
         if (_commandTimeout <= TimeSpan.Zero)
         {
             throw new ArgumentOutOfRangeException(nameof(commandTimeout));
@@ -66,6 +71,18 @@ public sealed class SystemdRuntimeDriver : ISystemdRuntimeDriver
         CancellationToken ct = default)
     {
         RequireUnit(unitName);
+        if (_broker is not null)
+        {
+            try
+            {
+                var brokerResponse = await _broker.SendAsync(unitName, "status", ct);
+                var brokerState = brokerResponse.GetProperty("status");
+                var brokerValues = brokerState.EnumerateObject().ToDictionary(x => x.Name, x => x.Value.GetString() ?? "", StringComparer.Ordinal);
+                return new(true, Value(brokerValues, "ActiveState"), Value(brokerValues, "SubState"), ParsePositiveInt(Value(brokerValues, "MainPID")), Value(brokerValues, "InvocationID"));
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch { return FailedState(); }
+        }
         var result = await RunBoundedAsync(new List<string>
         {
             "/usr/bin/systemctl",
@@ -98,6 +115,12 @@ public sealed class SystemdRuntimeDriver : ISystemdRuntimeDriver
         CancellationToken ct = default)
     {
         var unit = RequireUnit(unitName);
+        if (_broker is not null)
+        {
+            try { await _broker.SendAsync(unitName, action.ToString().ToLowerInvariant(), ct); return true; }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch { return false; }
+        }
         if (!unit.ControlEnabled || string.IsNullOrWhiteSpace(unit.ControlExecutable))
         {
             return false;

@@ -66,20 +66,16 @@ builder.Services.AddDbContext<AppDbContext>(o => o.UseSqlite("Data Source=gamepa
 builder.Services.AddScoped<GameServerManager>();
 builder.Services.AddScoped<IGameServerRuntime>(sp => sp.GetRequiredService<GameServerManager>());
 builder.Services.AddScoped<ICommandRunner>(_ => new ProcessCommandRunner());
+builder.Services.AddSingleton<PrivilegedBrokerClient>();
 builder.Services.AddScoped<ISystemdRuntimeDriver>(sp =>
 {
-    var config = builder.Configuration;
     var runner = sp.GetRequiredService<ICommandRunner>();
-    var valheimService = config["GameServers:Valheim:ServiceName"]
-        ?? "valheim-main.service";
-    var valheimControl = config["GameServers:Valheim:ControlExecutable"]
-        ?? "/usr/bin/systemctl";
-    var valheimSudoUser = config["GameServers:Valheim:SudoUser"] ?? "";
-    var pzService = config["GameServers:ProjectZomboid:ServiceName"]
-        ?? "pzserver-game.service";
-    var pzControl = config["GameServers:ProjectZomboid:ControlExecutable"]
-        ?? "/usr/local/sbin/pz-gamectl";
-    var pzSudoUser = config["GameServers:ProjectZomboid:SudoUser"] ?? "";
+    const string valheimService = "valheim-main.service";
+    const string valheimControl = "/usr/bin/systemctl";
+    const string valheimSudoUser = "";
+    const string pzService = "pzserver-game.service";
+    const string pzControl = "/usr/local/sbin/pz-gamectl";
+    const string pzSudoUser = "";
     return new SystemdRuntimeDriver(runner, new[]
     {
         new SystemdUnitDefinition(
@@ -94,7 +90,8 @@ builder.Services.AddScoped<ISystemdRuntimeDriver>(sp =>
             true,
             pzSudoUser,
             true),
-    });
+    },
+    broker: sp.GetRequiredService<PrivilegedBrokerClient>());
 });
 builder.Services.AddScoped<IValheimRuntimeProbe, ValheimRuntimeProbe>();
 builder.Services.AddScoped<ValheimRuntimeStrategy>();

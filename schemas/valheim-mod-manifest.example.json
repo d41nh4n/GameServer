@@ -1,0 +1,11 @@
+{
+  "packageId": "Example-Placeholder-Mod",
+  "version": "0.0.0-example",
+  "source": "local",
+  "target": "server-only",
+  "enabled": false,
+  "dependencies": [],
+  "files": [],
+  "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "testedGameBuild": "25253791",
+  "labTested": false}

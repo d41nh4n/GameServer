@@ -1,0 +1,22 @@
+[Unit]
+Description=GamePanel privileged broker
+After=local-fs.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+RuntimeDirectory=gamepanel
+RuntimeDirectoryMode=0750
+ExecStartPre=/usr/bin/chown root:gamepanel /run/gamepanel
+ExecStartPre=/usr/bin/chmod 0750 /run/gamepanel
+ExecStart=/usr/local/libexec/gamepanel-privileged
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=false
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
