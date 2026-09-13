@@ -118,6 +118,9 @@ builder.Services.AddSingleton<PzModService>();
 builder.Services.AddScoped<PzOpsService>();
 builder.Services.AddScoped<PzWorldBackupService>();
 builder.Services.AddScoped<ValheimMonitoringService>();
+builder.Services.AddScoped<ValheimModService>();
+builder.Services.AddMemoryCache();
+builder.Services.AddHttpClient<ThunderstoreService>();
 builder.Services.AddScoped<AuditLogService>();
 builder.Services.AddScoped<SystemEventService>();
 builder.Services.AddScoped<ResourceMetricsService>();
@@ -694,6 +697,110 @@ app.MapPost("/api/valheim/backups/{version}/rollback", async (string version, Va
     catch (InvalidOperationException e) { return Results.Conflict(new { success = false, error = e.Message }); }
     catch (Exception e) { return Results.BadRequest(new { success = false, error = e.Message }); }
 }).RequireAuthorization("admin");
+
+app.MapGet("/api/valheim/mods", (ValheimModService modService) =>
+    Results.Ok(new { success = true, mods = modService.ListMods() }))
+    .RequireAuthorization("authenticated");
+
+app.MapPost("/api/valheim/mods/toggle", async ([FromBody] ValheimModToggleRequest body, ValheimModService modService, CancellationToken ct) =>
+{
+    try
+    {
+        var mod = await modService.ToggleModAsync(body.RelativePath, ct);
+        return Results.Ok(new { success = true, mod });
+    }
+    catch (InvalidOperationException e) { return Results.Conflict(new { success = false, error = e.Message }); }
+    catch (FileNotFoundException e) { return Results.NotFound(new { success = false, error = e.Message }); }
+    catch (ArgumentException e) { return Results.BadRequest(new { success = false, error = e.Message }); }
+    catch (Exception e) { return Results.Problem(e.Message); }
+}).RequireAuthorization("admin");
+
+app.MapDelete("/api/valheim/mods", async (string? path, [FromBody(EmptyBodyBehavior = Microsoft.AspNetCore.Mvc.ModelBinding.EmptyBodyBehavior.Allow)] ValheimModDeleteRequest? body, ValheimModService modService, CancellationToken ct) =>
+{
+    var targetPath = !string.IsNullOrWhiteSpace(path) ? path : body?.RelativePath;
+    if (string.IsNullOrWhiteSpace(targetPath)) return Results.BadRequest(new { success = false, error = "Path is required." });
+    try
+    {
+        await modService.DeleteModAsync(targetPath, ct);
+        return Results.Ok(new { success = true });
+    }
+    catch (InvalidOperationException e) { return Results.Conflict(new { success = false, error = e.Message }); }
+    catch (FileNotFoundException e) { return Results.NotFound(new { success = false, error = e.Message }); }
+    catch (ArgumentException e) { return Results.BadRequest(new { success = false, error = e.Message }); }
+    catch (Exception e) { return Results.Problem(e.Message); }
+}).RequireAuthorization("admin");
+
+app.MapGet("/api/valheim/mods/config", async (string name, ValheimModService modService, CancellationToken ct) =>
+{
+    try
+    {
+        var content = await modService.GetConfigAsync(name, ct);
+        return Results.Ok(new { success = true, content });
+    }
+    catch (FileNotFoundException e) { return Results.NotFound(new { success = false, error = e.Message }); }
+    catch (ArgumentException e) { return Results.BadRequest(new { success = false, error = e.Message }); }
+    catch (Exception e) { return Results.Problem(e.Message); }
+}).RequireAuthorization("authenticated");
+
+app.MapPut("/api/valheim/mods/config", async ([FromBody] ValheimModConfigSaveRequest body, ValheimModService modService, CancellationToken ct) =>
+{
+    try
+    {
+        await modService.SaveConfigAsync(body.Name, body.Content, ct);
+        return Results.Ok(new { success = true });
+    }
+    catch (InvalidOperationException e) { return Results.Conflict(new { success = false, error = e.Message }); }
+    catch (ArgumentException e) { return Results.BadRequest(new { success = false, error = e.Message }); }
+    catch (Exception e) { return Results.Problem(e.Message); }
+}).RequireAuthorization("admin");
+
+app.MapPost("/api/valheim/mods/upload", async (IFormFile file, ValheimModService modService, CancellationToken ct) =>
+{
+    if (file == null || file.Length == 0) return Results.BadRequest(new { success = false, error = "File is required." });
+    if (file.Length > 50 * 1024 * 1024) return Results.BadRequest(new { success = false, error = "File size exceeds 50MB limit." });
+    try
+    {
+        using var stream = file.OpenReadStream();
+        var files = await modService.UploadModAsync(file.FileName, stream, ct);
+        return Results.Ok(new { success = true, files });
+    }
+    catch (InvalidOperationException e) { return Results.Conflict(new { success = false, error = e.Message }); }
+    catch (ArgumentException e) { return Results.BadRequest(new { success = false, error = e.Message }); }
+    catch (Exception e) { return Results.Problem(e.Message); }
+}).RequireAuthorization("admin");
+
+app.MapGet("/api/valheim/mods/thunderstore/search", async (string? q, int? page, int? pageSize, ThunderstoreService thunderstore, CancellationToken ct) =>
+{
+    try
+    {
+        var result = await thunderstore.SearchAsync(q, page ?? 1, pageSize ?? 20, ct);
+        return Results.Ok(new { success = true, result });
+    }
+    catch (Exception e) { return Results.Problem(e.Message); }
+}).RequireAuthorization("authenticated");
+
+app.MapPost("/api/valheim/mods/thunderstore/install", async ([FromBody] ValheimThunderstoreInstallRequest body, ValheimModService modService, IHttpClientFactory httpFactory, CancellationToken ct) =>
+{
+    if (string.IsNullOrWhiteSpace(body.DownloadUrl)) return Results.BadRequest(new { success = false, error = "DownloadUrl is required." });
+    try
+    {
+        var client = httpFactory.CreateClient();
+        client.Timeout = TimeSpan.FromMinutes(2);
+        var files = await modService.InstallThunderstoreModAsync(body.DownloadUrl, body.PackageFullName, client, ct);
+        return Results.Ok(new { success = true, files });
+    }
+    catch (InvalidOperationException e) { return Results.Conflict(new { success = false, error = e.Message }); }
+    catch (ArgumentException e) { return Results.BadRequest(new { success = false, error = e.Message }); }
+    catch (Exception e) { return Results.Problem(e.Message); }
+}).RequireAuthorization("admin");
+
+app.MapGet("/api/valheim/mods/export-modpack", (ValheimModService modService) =>
+{
+    var memoryStream = new MemoryStream();
+    modService.ExportClientModpack(memoryStream);
+    memoryStream.Position = 0;
+    return Results.File(memoryStream, "application/zip", "Valheim_Client_Mods.zip");
+}).RequireAuthorization("authenticated");
 
 app.MapGet("/api/pz/backups", (PzWorldBackupService backups) =>
     Results.Ok(new { success = true, backups = backups.List() }))
