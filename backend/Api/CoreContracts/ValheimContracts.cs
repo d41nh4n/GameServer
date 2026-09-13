@@ -11,3 +11,8 @@ public sealed record ValheimWorldModifierSettingsRequest(
     bool PlayerBasedRaids,
     bool HammerMode,
     bool NoBuildCost);
+
+public sealed record ValheimModToggleRequest(string RelativePath);
+public sealed record ValheimModDeleteRequest(string RelativePath);
+public sealed record ValheimModConfigSaveRequest(string Name, string Content);
+public sealed record ValheimThunderstoreInstallRequest(string DownloadUrl, string PackageFullName);

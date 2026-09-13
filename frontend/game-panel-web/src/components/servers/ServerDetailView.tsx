@@ -9,6 +9,7 @@ import ServerResourceDetail from "./ServerResourceDetail";
 import ValheimSettings from "./ValheimSettings";
 import ValheimAdmin from "./ValheimAdmin";
 import AuditLogView from "./AuditLogView";
+import ValheimMods from "./ValheimMods";
 
 type DetailTab = "controls" | "status" | "settings" | "admin" | "backups" | "logs" | "audit" | "config" | "rcon" | "mods" | "sandbox";
 
@@ -24,7 +25,13 @@ export default function ServerDetailView({ server, auth, loading, onAction, onBa
   const isValheim = server.gameType === "Valheim";
   const tabs: { id: DetailTab; label: string }[] = [
     { id: "controls", label: "Controls" },
-    ...(isValheim ? [{ id: "status" as DetailTab, label: "Status & Checks" }, { id: "settings" as DetailTab, label: "Game Settings" }, { id: "admin" as DetailTab, label: "Admin Control" }, { id: "backups" as DetailTab, label: "World Versions" }] : []),
+    ...(isValheim ? [
+      { id: "status" as DetailTab, label: "Status & Checks" },
+      { id: "settings" as DetailTab, label: "Game Settings" },
+      { id: "admin" as DetailTab, label: "Admin Control" },
+      { id: "mods" as DetailTab, label: "Mods" },
+      { id: "backups" as DetailTab, label: "World Versions" }
+    ] : []),
     ...(isPZ ? [{ id: "backups" as DetailTab, label: "World Versions" }] : []),
     { id: "logs", label: "Logs" },
     ...(auth.isAdmin ? [{ id: "audit" as DetailTab, label: "Audit" }] : []),
@@ -69,6 +76,7 @@ export default function ServerDetailView({ server, auth, loading, onAction, onBa
         {tab === "audit" && <AuditLogView auth={auth} serverId={server.id} />}
         {tab === "config" && isPZ && <DetailConfig auth={auth} />}
         {tab === "rcon" && isPZ && <DetailRcon auth={auth} />}
+        {tab === "mods" && isValheim && <ValheimMods auth={auth} serverStatus={server.status} />}
         {tab === "mods" && isPZ && <DetailMods auth={auth} />}
         {tab === "sandbox" && isPZ && <DetailSandbox auth={auth} />}
       </div>

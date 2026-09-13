@@ -21,6 +21,38 @@ export type Server = {
 
 export type ServerOperationJob = { id: string; serverId: string; kind: number; status: number; error?: string | null };
 
+export type ValheimMod = {
+  name: string;
+  fileName: string;
+  relativePath: string;
+  sizeBytes: number;
+  enabled: boolean;
+  lastModifiedUtc: string;
+  hasConfig: boolean;
+  configFileName?: string | null;
+};
+
+export type ThunderstorePackage = {
+  name: string;
+  fullName: string;
+  owner: string;
+  packageUrl: string;
+  versionNumber: string;
+  iconUrl?: string | null;
+  description?: string | null;
+  downloadUrl: string;
+  downloads: number;
+  websiteUrl?: string | null;
+  dateCreated: string;
+};
+
+export type ThunderstoreSearchResult = {
+  total: number;
+  page: number;
+  pageSize: number;
+  items: ThunderstorePackage[];
+};
+
 export class ApiError extends Error {
   readonly status: number;
   constructor(status: number, message: string) {
@@ -114,7 +146,7 @@ export class AuthProvider {
   // Shared client: attaches Bearer and clears authentication on HTTP 401.
   private async request<T>(path: string, init?: RequestInit): Promise<T> {
     const headers = new Headers(init?.headers ?? {});
-    if (init?.body && !headers.has("Content-Type")) {
+    if (init?.body && !(init.body instanceof FormData) && !headers.has("Content-Type")) {
       headers.set("Content-Type", "application/json");
     }
     if (this.token) {
@@ -225,6 +257,44 @@ export class AuthProvider {
   async valheimMemberAdd(id: string, role: string): Promise<any> { return this.request<any>("/api/valheim/members", { method: "POST", body: JSON.stringify({ id, role }) }); }
   async valheimMemberRemove(id: string, role: string): Promise<any> { return this.request<any>("/api/valheim/members", { method: "DELETE", body: JSON.stringify({ id, role }) }); }
   async valheimBackups(): Promise<any> { return this.request<any>("/api/valheim/backups"); }
+  async valheimMods(): Promise<{ success: boolean; mods: ValheimMod[] }> { return this.request<{ success: boolean; mods: ValheimMod[] }>("/api/valheim/mods"); }
+  async valheimModToggle(relativePath: string): Promise<{ success: boolean; mod: ValheimMod }> {
+    return this.request<{ success: boolean; mod: ValheimMod }>("/api/valheim/mods/toggle", { method: "POST", body: JSON.stringify({ relativePath }) });
+  }
+  async valheimModDelete(relativePath: string): Promise<{ success: boolean }> {
+    return this.request<{ success: boolean }>(`/api/valheim/mods?path=${encodeURIComponent(relativePath)}`, { method: "DELETE" });
+  }
+  async valheimModConfig(name: string): Promise<{ success: boolean; content: string }> {
+    return this.request<{ success: boolean; content: string }>(`/api/valheim/mods/config?name=${encodeURIComponent(name)}`);
+  }
+  async valheimModConfigSave(name: string, content: string): Promise<{ success: boolean }> {
+    return this.request<{ success: boolean }>("/api/valheim/mods/config", { method: "PUT", body: JSON.stringify({ name, content }) });
+  }
+  async valheimModUpload(file: File): Promise<{ success: boolean; files: string[] }> {
+    const formData = new FormData();
+    formData.append("file", file);
+    return this.request<{ success: boolean; files: string[] }>("/api/valheim/mods/upload", { method: "POST", body: formData });
+  }
+  async valheimThunderstoreSearch(query = "", page = 1, pageSize = 20): Promise<{ success: boolean; result: ThunderstoreSearchResult }> {
+    const params = new URLSearchParams();
+    if (query) params.set("q", query);
+    params.set("page", String(page));
+    params.set("pageSize", String(pageSize));
+    return this.request<{ success: boolean; result: ThunderstoreSearchResult }>(`/api/valheim/mods/thunderstore/search?${params.toString()}`);
+  }
+  async valheimThunderstoreInstall(downloadUrl: string, packageFullName: string): Promise<{ success: boolean; files: string[] }> {
+    return this.request<{ success: boolean; files: string[] }>("/api/valheim/mods/thunderstore/install", {
+      method: "POST",
+      body: JSON.stringify({ downloadUrl, packageFullName }),
+    });
+  }
+  async valheimExportModpack(): Promise<Blob> {
+    const headers = new Headers();
+    if (this.token) headers.set("Authorization", `Bearer ${this.token}`);
+    const res = await fetch(`${API_BASE}/api/valheim/mods/export-modpack`, { headers });
+    if (!res.ok) throw new ApiError(res.status, "Không thể tải file modpack");
+    return res.blob();
+  }
   async auditLogs(params: { serverId?: string; fromUtc?: string; toUtc?: string; type?: string; resultCode?: string; page?: number; pageSize?: number } = {}): Promise<{ items: any[]; total: number; page: number; pageSize: number; hasMore: boolean }> {
     const query = new URLSearchParams(); Object.entries(params).forEach(([key, value]) => { if (value !== undefined && value !== "") query.set(key, String(value)); });
     return this.request(`/api/audit?${query.toString()}`);
