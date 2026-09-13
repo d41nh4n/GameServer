@@ -47,11 +47,11 @@ class LocalController:
  def __init__(self, cfg): self.cfg=cfg
  def status(self, instance):
   c=self.cfg["instances"][instance]; service=c["service"]
-  if not service: return {"active":"inactive","sub":"dead","pid":0,"ports":False}
-  p=subprocess.run(["/usr/bin/systemctl","show",service,"-p","ActiveState","-p","SubState","-p","MainPID","--no-pager"],capture_output=True,text=True,timeout=30)
+  if not service: return {"active":"inactive","sub":"dead","pid":0,"ports":False,"ActiveState":"inactive","SubState":"dead","MainPID":"0","InvocationID":""}
+  p=subprocess.run(["/usr/bin/systemctl","show",service,"-p","ActiveState","-p","SubState","-p","MainPID","-p","InvocationID","--no-pager"],capture_output=True,text=True,timeout=30)
   d=dict(x.split("=",1) for x in p.stdout.splitlines() if "=" in x)
   ports=subprocess.run(["/usr/bin/ss","-H","-lun"],capture_output=True,text=True,timeout=10).stdout
-  return {"active":d.get("ActiveState"),"sub":d.get("SubState"),"pid":int(d.get("MainPID","0") or 0),"ports":any(":"+str(x) in ports for x in c["ports"])}
+  return {"active":d.get("ActiveState"),"sub":d.get("SubState"),"pid":int(d.get("MainPID","0") or 0),"ports":any(":"+str(x) in ports for x in c["ports"]),"ActiveState":d.get("ActiveState", ""),"SubState":d.get("SubState", ""),"MainPID":d.get("MainPID", "0"),"InvocationID":d.get("InvocationID", "")}
  def stop(self,instance):
   service=self.cfg["instances"][instance]["service"]; subprocess.run(["/usr/bin/systemctl","stop",service],check=True,timeout=180)
  def start(self,instance):
