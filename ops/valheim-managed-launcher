@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# GamePanel-managed Doorstop launcher. Runtime arguments are supplied by the caller.
+readonly BASE_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)"
+cd "$BASE_DIR"
+export DOORSTOP_ENABLED=1
+export DOORSTOP_TARGET_ASSEMBLY="./BepInEx/core/BepInEx.Preloader.dll"
+export LD_LIBRARY_PATH="./doorstop_libs:${LD_LIBRARY_PATH:-}"
+export LD_PRELOAD="libdoorstop_x64.so${LD_PRELOAD:+:${LD_PRELOAD}}"
+exec "$@"

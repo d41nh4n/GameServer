@@ -114,7 +114,7 @@ class Broker:
   self.peer(True); self.replay_check(req["requestId"],True); self.audit(req,"seal","started")
   if req["instanceId"]!="valheim-main": fail("seal instance denied")
   root,mp,d,items,th=self.validate_manifest(req["deploymentId"])
-  final=Path(self.cfg["paths"]["productionMods"])/d["packageId"]/d["version"]/d["archiveSha256"].lower()
+  final=Path(self.cfg["paths"]["productionMods"])/d["packageId"]/d["version"]/d["archiveSha256"].lower()/th
   if final.exists(): fail("sealed artifact already exists")
   final.parent.mkdir(parents=True,exist_ok=True); tmp=Path(tempfile.mkdtemp(prefix=".seal-",dir=final.parent))
   try:
@@ -137,11 +137,12 @@ class Broker:
   return {"ok":True,"state":"sealed","sealedPath":str(final),"approval":approval}
  def sealed(self,did):
   base=Path(self.cfg["paths"]["productionMods"]); matches=[]
-  for p in base.glob("*/*/*/approval.json"):
-   try:
-    a=json.loads(p.read_text())
-    if a.get("deploymentId")==did: matches.append((p.parent,a))
-   except Exception: pass
+  for pattern in ("*/*/*/*/approval.json","*/*/*/approval.json"):
+   for p in base.glob(pattern):
+    try:
+     a=json.loads(p.read_text())
+     if a.get("deploymentId")==did: matches.append((p.parent,a))
+    except Exception: pass
   if len(matches)!=1: fail("sealed approval missing or ambiguous")
   return matches[0]
  def verify_sealed(self,did):
@@ -214,7 +215,13 @@ class Broker:
  def handle(self,req):
   self.envelope(req); action=req["action"]
   if action=="status": return {"ok":True,"status":self.controller.status(req["instanceId"])}
-  if action in {"start","stop","restart"}: self.peer(True); self.replay_check(req["requestId"],True); return {"ok":False,"error":"lifecycle unchanged in Phase 3A"}
+  if action in {"start","stop","restart"}:
+   self.peer(True); self.replay_check(req["requestId"],True)
+   if req["instanceId"]!="valheim-plugin-compat": return {"ok":False,"error":"lifecycle disabled in Phase 3B.1"}
+   if action=="stop": self.controller.stop(req["instanceId"])
+   elif action=="start": self.controller.start(req["instanceId"])
+   else: self.controller.stop(req["instanceId"]); self.controller.start(req["instanceId"])
+   return {"ok":True,"state":action,"status":self.controller.status(req["instanceId"])}
   lock=open(self.lock_path,"a+")
   try: fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
   except Exception: lock.close(); raise

@@ -27,13 +27,13 @@ class Tests(unittest.TestCase):
   self.b=Broker(self.cfg,C(),uid=os.getuid()); self.req=lambda action='seal',did=self.did:{'requestVersion':1,'requestId':str(uuid.uuid4()),'action':action,'instanceId':'valheim-main','deploymentId':did}
  def tearDown(self): self.t.cleanup()
  def seal(self): return self.b.handle(self.req())
- def test_valid_sealed_artifact(self): self.assertEqual(self.seal()['state'],'sealed'); self.assertTrue((self.mods/'Author-Mod'/'1.0.0'/('a'*64)/'approval.json').is_file())
+ def test_valid_sealed_artifact(self): self.assertEqual(self.seal()['state'],'sealed'); self.assertEqual(len(list((self.mods/'Author-Mod'/'1.0.0').glob('*/*/approval.json'))),1)
  def test_hash_mismatch_rejected(self): (Path(self.cfg['paths']['stagingRoot'])/self.did/'normalized'/'x.dll').write_bytes(b'bad'); self.assertRaises(BrokerError,self.seal)
  def test_not_lab_tested_rejected(self): self.base['state']='validated'; (Path(self.cfg['paths']['stagingRoot'])/self.did/'deployment-manifest.json').write_text(json.dumps(self.base)); self.assertRaises(BrokerError,self.seal)
  def test_build_mismatch_rejected(self): self.base['testedGameBuild']='1'; (Path(self.cfg['paths']['stagingRoot'])/self.did/'deployment-manifest.json').write_text(json.dumps(self.base)); self.assertRaises(BrokerError,self.seal)
  def test_traversal_rejected(self): self.base['files'][0]['destination']='../x'; (Path(self.cfg['paths']['stagingRoot'])/self.did/'deployment-manifest.json').write_text(json.dumps(self.base)); self.assertRaises(BrokerError,self.seal)
  def test_unknown_action_instance_rejected(self): q=self.req('unknown'); self.assertRaises(BrokerError,self.b.handle,q); q=self.req(); q['instanceId']='pz-main'; self.assertRaises(BrokerError,self.b.handle,q)
- def test_gamepanel_writable_sealed_rejected(self): self.seal(); p=self.mods/'Author-Mod'/'1.0.0'/('a'*64)/'files/BepInEx/plugins/x.dll'; p.chmod(0o660); self.assertRaises(BrokerError,self.b.verify_sealed,self.did)
+ def test_gamepanel_writable_sealed_rejected(self): self.seal(); p=next((self.mods/'Author-Mod'/'1.0.0').glob('*/*/files/BepInEx/plugins/x.dll')); p.chmod(0o660); self.assertRaises(BrokerError,self.b.verify_sealed,self.did)
  def test_replayed_request_rejected(self): q=self.req(); self.b.handle(q); self.assertRaises(BrokerError,self.b.handle,q)
  def test_concurrent_deployment_rejected(self):
   with open(self.b.lock_path,'a+') as f:

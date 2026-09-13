@@ -1,0 +1,16 @@
+[Unit]
+Description=GamePanel Valheim compatibility lab
+After=local-fs.target
+
+[Service]
+Type=simple
+User=valheim
+Group=valheim
+WorkingDirectory=/srv/gamepanel/labs/valheim-plugin-compat
+EnvironmentFile=/run/gamepanel/valheim-lab.env
+ExecStart=/srv/gamepanel/labs/valheim-plugin-compat/start-lab.sh
+Restart=no
+KillSignal=SIGINT
+TimeoutStopSec=120
+StandardOutput=append:/srv/gamepanel/labs/valheim-plugin-compat/logs/phase3b1-managed.log
+StandardError=append:/srv/gamepanel/labs/valheim-plugin-compat/logs/phase3b1-managed.log

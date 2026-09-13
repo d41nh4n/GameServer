@@ -3,7 +3,7 @@
   "socket": "/run/gamepanel/privileged.sock",
   "instances": {
     "valheim-main": {"service": "valheim-main.service", "root": "/srv/gamepanel/instances/valheim-main", "ports": [2456, 2457], "testedBuild": "25253791"},
-    "valheim-plugin-compat": {"service": "", "root": "/srv/gamepanel/labs/valheim-plugin-compat", "ports": [2466, 2467], "testedBuild": "25253791"},
+    "valheim-plugin-compat": {"service": "gamepanel-valheim-plugin-compat.service", "root": "/srv/gamepanel/labs/valheim-plugin-compat", "ports": [2466, 2467], "testedBuild": "25253791"},
     "pz-main": {"service": "pzserver-game.service", "root": "/home/pzserver", "ports": [16261], "testedBuild": ""}
   },
   "backendUser": "gamepanel",
