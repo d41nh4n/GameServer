@@ -15,8 +15,8 @@
     "brokerState": "/srv/gamepanel/instances/valheim-main/backups/mod-deployments/broker-state",
     "launcherSource": "/usr/local/libexec/gamepanel-reviewed-valheim-main-start",
     "managedLauncherSource": "/usr/local/libexec/gamepanel-reviewed-valheim-managed-launcher",
-    "launcherTarget": "/usr/local/libexec/valheim-main-start",
-    "managedLauncherTarget": "/usr/local/libexec/valheim-managed-launcher"
+    "launcherTarget": "/usr/local/libexec/gamepanel-launchers/valheim-main-start",
+    "managedLauncherTarget": "/usr/local/libexec/gamepanel-launchers/valheim-managed-launcher"
   },
   "features": {
     "productionDeploymentEnabled": false

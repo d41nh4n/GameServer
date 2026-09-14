@@ -5,7 +5,11 @@ set -euo pipefail
 readonly BASE_DIR="${GAMEPANEL_VALHEIM_SERVER_ROOT:-$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)}"
 cd "$BASE_DIR"
 export DOORSTOP_ENABLED=1
-export DOORSTOP_TARGET_ASSEMBLY="./BepInEx/core/BepInEx.Preloader.dll"
-export LD_LIBRARY_PATH="./linux64:./doorstop_libs:${LD_LIBRARY_PATH:-}"
-export LD_PRELOAD="libdoorstop_x64.so${LD_PRELOAD:+:${LD_PRELOAD}}"
+export DOORSTOP_TARGET_ASSEMBLY="$BASE_DIR/BepInEx/core/BepInEx.Preloader.dll"
+export LD_LIBRARY_PATH="$BASE_DIR/linux64:$BASE_DIR/doorstop_libs:${LD_LIBRARY_PATH:-}"
+if [[ -f "$BASE_DIR/doorstop_libs/libdoorstop_x64.so" ]]; then
+ export LD_PRELOAD="$BASE_DIR/doorstop_libs/libdoorstop_x64.so${LD_PRELOAD:+:${LD_PRELOAD}}"
+else
+ unset DOORSTOP_ENABLED DOORSTOP_TARGET_ASSEMBLY LD_PRELOAD
+fi
 exec "$@"

@@ -6,7 +6,7 @@ readonly SERVER_ROOT="${GAMEPANEL_VALHEIM_SERVER_ROOT:-/srv/gamepanel/instances/
 readonly DATA_ROOT="${GAMEPANEL_VALHEIM_DATA_ROOT:-/srv/gamepanel/instances/valheim-main/data}"
 readonly RUNTIME_ROOT="${GAMEPANEL_VALHEIM_RUNTIME_ROOT:-/srv/gamepanel/instances/valheim-main/runtime}"
 readonly MODIFIERS_FILE="$DATA_ROOT/panel-modifiers.env"
-readonly MANAGED_LAUNCHER="${GAMEPANEL_VALHEIM_MANAGED_LAUNCHER:-/usr/local/libexec/valheim-managed-launcher}"
+readonly MANAGED_LAUNCHER="${GAMEPANEL_VALHEIM_MANAGED_LAUNCHER:-/usr/local/libexec/gamepanel-launchers/valheim-managed-launcher}"
 
 : "${VALHEIM_SERVER_NAME:?VALHEIM_SERVER_NAME is required}"
 : "${VALHEIM_WORLD_NAME:?VALHEIM_WORLD_NAME is required}"
