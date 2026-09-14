@@ -5,8 +5,6 @@ using Microsoft.EntityFrameworkCore.Migrations;
 
 namespace GamePanel.Infrastructure.Migrations;
 
-[Migration("20260911002000_AddServerStatusSnapshots")]
-
 public partial class AddServerStatusSnapshots : Migration
 {
     protected override void Up(MigrationBuilder migrationBuilder)

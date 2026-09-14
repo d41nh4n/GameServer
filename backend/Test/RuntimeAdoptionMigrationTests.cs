@@ -10,6 +10,25 @@ public sealed class RuntimeAdoptionMigrationTests : IDisposable
         "gamepanel-adoption-migration-" + Guid.NewGuid().ToString("N") + ".db");
 
     [Fact]
+    public async Task MigrationAddsServerStatusSnapshotTable()
+    {
+        var options = new DbContextOptionsBuilder<AppDbContext>()
+            .UseSqlite("Data Source=" + _dbPath)
+            .Options;
+        await using (var db = new AppDbContext(options))
+        {
+            await db.Database.MigrateAsync();
+        }
+
+        await using var connection = new SqliteConnection("Data Source=" + _dbPath);
+        await connection.OpenAsync();
+        var tables = await ReadNames(connection, "SELECT name FROM sqlite_master WHERE type = 'table'", 0);
+        Assert.Contains("ServerStatusSnapshots", tables);
+        var migrations = await ReadNames(connection, "SELECT MigrationId FROM __EFMigrationsHistory", 0);
+        Assert.Contains("20260911002000_AddServerStatusSnapshots", migrations);
+    }
+
+    [Fact]
     public async Task MigrationAddsAdoptionColumnsAndUniqueIndexes()
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()
