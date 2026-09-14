@@ -11,7 +11,7 @@ public sealed record UpdaterOptions(
 {
     public static UpdaterOptions Parse(string[] args)
     {
-        string apiBase = "http://100.82.102.38:5000";
+        string apiBase = "http://100.82.102.38:5001";
         string? gameDirectory = null;
         var checkOnly = false;
         var launch = false;

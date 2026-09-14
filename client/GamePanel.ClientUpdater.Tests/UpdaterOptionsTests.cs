@@ -26,6 +26,19 @@ public sealed class UpdaterOptionsTests : IDisposable
     }
 
     [Fact]
+    public void Parse_DefaultsToDedicatedClientSyncPort()
+    {
+        File.WriteAllText(Path.Combine(_root, "valheim.exe"), "test");
+
+        var options = UpdaterOptions.Parse([
+            "--game-dir", _root,
+            "--check-only",
+        ]);
+
+        Assert.Equal("http://100.82.102.38:5001/", options.ApiBase.ToString());
+    }
+
+    [Fact]
     public void Parse_RejectsPlainHttpOutsideLoopbackOrTailscale()
     {
         Assert.Throws<ArgumentException>(() => UpdaterOptions.Parse([

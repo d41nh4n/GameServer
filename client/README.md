@@ -16,21 +16,22 @@ The updater never follows a moving `latest` version. The server must publish an 
 
 ## Windows usage
 
-1. Download `GamePanel.ClientUpdater.exe` from the release supplied by the panel operator.
+1. Download `GamePanel.ClientUpdater.exe` and `SHA256SUMS` from `http://100.82.102.38:5001/`, then verify the checksum.
 2. Run it by double-clicking or PowerShell:
 
 ```powershell
-.\GamePanel.ClientUpdater.exe --api-base http://100.82.102.38:5000 --check-only
-.\GamePanel.ClientUpdater.exe --api-base http://100.82.102.38:5000 --launch
+.\GamePanel.ClientUpdater.exe --check-only
+.\GamePanel.ClientUpdater.exe --launch
 ```
 
 It detects the normal Steam Valheim path. If Steam is installed elsewhere:
 
 ```powershell
-.\GamePanel.ClientUpdater.exe --api-base http://100.82.102.38:5000 --game-dir "D:\SteamLibrary\steamapps\common\Valheim" --launch
+.\GamePanel.ClientUpdater.exe --game-dir "D:\SteamLibrary\steamapps\common\Valheim" --launch
 ```
 
 Use `--check-only` first: it downloads and verifies the approved manifest/packages but does not alter Valheim files.
+On apply, files managed by the previous manifest but removed from the current revision are backed up and removed. Unmanaged client files are left untouched.
 
 ## Build a portable EXE
 

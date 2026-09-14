@@ -22,6 +22,7 @@ Detailed source/feature documentation: [`docs/SOURCE_KNOWLEDGE_BASE.md`](docs/SO
 ## Ports
 
 - API: `http://localhost:5000` or `http://100.82.102.38:5000`
+- Client mod sync: `http://100.82.102.38:5001` (Tailscale-only; updater download plus authenticated manifest/packages)
 - React/Vite: `http://localhost:5173` or `http://100.82.102.38:5173`
 - Legacy Flask PZ manager: `127.0.0.1:8081` behind existing nginx
 

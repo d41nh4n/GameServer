@@ -31,7 +31,7 @@ ASP.NET Core API :5000
         ├── AuditLogs
         └── SystemEvents
 
-Raw logs remain in systemd journal/filesystem; SQLite stores audit and lifecycle facts only. The optional Windows Client Updater authenticates to the API, reads an approved client-modpack manifest, verifies pinned archive/file hashes, then installs only allowlisted BepInEx/Doorstop paths with rollback backups. It never follows a moving `latest` package.
+Raw logs remain in systemd journal/filesystem; SQLite stores audit and lifecycle facts only. The optional Windows Client Updater authenticates through the dedicated Tailscale listener on port `5001`, reads an approved client-modpack manifest, verifies pinned archive/file hashes, then installs only allowlisted BepInEx/Doorstop paths with rollback backups. Files from the previous managed revision that are absent from the current manifest are backed up and removed; unmanaged files remain untouched. It never follows a moving `latest` package.
 ```
 
 ## 3. Backend source map

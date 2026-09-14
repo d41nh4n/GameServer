@@ -9,6 +9,7 @@ public sealed class PackageInstaller
     private const long MaxArchiveBytes = 256L * 1024 * 1024;
     private const long MaxUncompressedBytes = 1024L * 1024 * 1024;
     private const int MaxEntries = 8192;
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     public async Task<UpdateResult> ApplyAsync(
         string gameDirectory,
@@ -30,23 +31,34 @@ public sealed class PackageInstaller
             ExtractVerifiedPackage(package, archiveBytes, payloads);
         }
 
-        var changed = new List<string>();
+        var updaterRoot = Path.Combine(gameRoot, ".gamepanel-updater");
+        var previousPaths = await ReadPreviousManagedPathsAsync(updaterRoot, ct);
+        var changedPayloads = new List<string>();
         foreach (var item in payloads)
         {
             var target = SafeTarget(gameRoot, item.Key);
-            if (!File.Exists(target) || !await FileMatchesAsync(target, item.Value, ct)) changed.Add(item.Key);
+            if (!File.Exists(target) || !await FileMatchesAsync(target, item.Value, ct)) changedPayloads.Add(item.Key);
         }
-        if (checkOnly || changed.Count == 0)
+        var currentPaths = payloads.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var stalePaths = previousPaths
+            .Where(path => !currentPaths.Contains(path) && File.Exists(SafeTarget(gameRoot, path)))
+            .ToList();
+        var changed = changedPayloads.Concat(stalePaths).ToList();
+        if (checkOnly)
             return new UpdateResult(manifest.Revision, checkOnly, changed, null);
+        if (changed.Count == 0)
+        {
+            await WriteCurrentManifestAsync(updaterRoot, manifest, ct);
+            return new UpdateResult(manifest.Revision, false, changed, null);
+        }
 
-        var updaterRoot = Path.Combine(gameRoot, ".gamepanel-updater");
         var backupRoot = Path.Combine(updaterRoot, "backups", DateTimeOffset.UtcNow.ToString("yyyyMMddTHHmmssfffZ") + "-" + manifest.Revision);
         var applied = new List<(string RelativePath, bool Existed)>();
         Directory.CreateDirectory(backupRoot);
 
         try
         {
-            foreach (var relativePath in changed)
+            foreach (var relativePath in changedPayloads)
             {
                 ct.ThrowIfCancellationRequested();
                 var target = SafeTarget(gameRoot, relativePath);
@@ -65,14 +77,18 @@ public sealed class PackageInstaller
                 applied.Add((relativePath, existed));
             }
 
-            var statePath = Path.Combine(updaterRoot, "current-manifest.json");
-            Directory.CreateDirectory(updaterRoot);
-            var stateTemporary = statePath + ".tmp";
-            await File.WriteAllTextAsync(
-                stateTemporary,
-                JsonSerializer.Serialize(manifest, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = true }) + Environment.NewLine,
-                ct);
-            File.Move(stateTemporary, statePath, overwrite: true);
+            foreach (var relativePath in stalePaths)
+            {
+                ct.ThrowIfCancellationRequested();
+                var target = SafeTarget(gameRoot, relativePath);
+                var backup = SafeTarget(backupRoot, relativePath);
+                Directory.CreateDirectory(Path.GetDirectoryName(backup)!);
+                File.Copy(target, backup, overwrite: false);
+                File.Delete(target);
+                applied.Add((relativePath, true));
+            }
+
+            await WriteCurrentManifestAsync(updaterRoot, manifest, ct);
         }
         catch
         {
@@ -93,6 +109,50 @@ public sealed class PackageInstaller
         }
 
         return new UpdateResult(manifest.Revision, false, changed, backupRoot);
+    }
+
+    private static async Task WriteCurrentManifestAsync(
+        string updaterRoot,
+        ClientUpdateManifest manifest,
+        CancellationToken ct)
+    {
+        var statePath = Path.Combine(updaterRoot, "current-manifest.json");
+        Directory.CreateDirectory(updaterRoot);
+        var stateTemporary = statePath + ".tmp";
+        await File.WriteAllTextAsync(
+            stateTemporary,
+            JsonSerializer.Serialize(manifest, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = true }) + Environment.NewLine,
+            ct);
+        File.Move(stateTemporary, statePath, overwrite: true);
+    }
+
+    private static async Task<IReadOnlyList<string>> ReadPreviousManagedPathsAsync(
+        string updaterRoot,
+        CancellationToken ct)
+    {
+        var statePath = Path.Combine(updaterRoot, "current-manifest.json");
+        if (!File.Exists(statePath)) return [];
+
+        ClientUpdateManifest previous;
+        try
+        {
+            await using var stream = new FileStream(
+                statePath,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read,
+                81920,
+                FileOptions.Asynchronous | FileOptions.SequentialScan);
+            previous = await JsonSerializer.DeserializeAsync<ClientUpdateManifest>(stream, JsonOptions, ct)
+                ?? throw new InvalidDataException("Previous client manifest is empty.");
+        }
+        catch (JsonException error)
+        {
+            throw new InvalidDataException("Previous client manifest is invalid.", error);
+        }
+
+        ManifestValidator.Validate(previous);
+        return previous.Packages.SelectMany(package => package.Files).Select(file => file.Path).ToList();
     }
 
     private static void ExtractVerifiedPackage(

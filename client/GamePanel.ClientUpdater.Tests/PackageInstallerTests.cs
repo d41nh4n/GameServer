@@ -89,6 +89,85 @@ public sealed class PackageInstallerTests : IDisposable
     }
 
     [Fact]
+    public async Task ApplyAsync_RemovesFilesManagedByThePreviousManifestButNotTheCurrentRevision()
+    {
+        var game = Path.Combine(_root, "game-remove-stale");
+        var plugins = Path.Combine(game, "BepInEx", "plugins");
+        Directory.CreateDirectory(plugins);
+        var stale = Path.Combine(plugins, "OldMod.dll");
+        var unmanaged = Path.Combine(plugins, "MyLocalMod.dll");
+        await File.WriteAllTextAsync(stale, "old-managed-mod");
+        await File.WriteAllTextAsync(unmanaged, "keep-local-mod");
+
+        var updaterRoot = Path.Combine(game, ".gamepanel-updater");
+        Directory.CreateDirectory(updaterRoot);
+        var previousArchive = CreateZip(("BepInEx/plugins/OldMod.dll", "old-managed-mod"));
+        var previous = Manifest(Package("Old-Mod", "1.0.0", previousArchive,
+            new ClientPackageFile("BepInEx/plugins/OldMod.dll", Sha("old-managed-mod"))));
+        await File.WriteAllTextAsync(
+            Path.Combine(updaterRoot, "current-manifest.json"),
+            System.Text.Json.JsonSerializer.Serialize(previous, new System.Text.Json.JsonSerializerOptions
+            {
+                PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase,
+            }));
+
+        var currentArchive = CreateZip(("BepInEx/plugins/NewMod.dll", "new-mod"));
+        var current = Manifest(Package("New-Mod", "2.0.0", currentArchive,
+            new ClientPackageFile("BepInEx/plugins/NewMod.dll", Sha("new-mod"))));
+        var installer = new PackageInstaller();
+
+        var result = await installer.ApplyAsync(
+            game,
+            current,
+            (_, _) => Task.FromResult<Stream>(new MemoryStream(currentArchive)),
+            checkOnly: false);
+
+        Assert.False(File.Exists(stale));
+        Assert.Equal("keep-local-mod", await File.ReadAllTextAsync(unmanaged));
+        Assert.Equal("new-mod", await File.ReadAllTextAsync(Path.Combine(plugins, "NewMod.dll")));
+        Assert.Contains("BepInEx/plugins/OldMod.dll", result.ChangedFiles);
+        Assert.Equal(
+            "old-managed-mod",
+            await File.ReadAllTextAsync(Path.Combine(result.BackupDirectory!, "BepInEx", "plugins", "OldMod.dll")));
+    }
+
+    [Fact]
+    public async Task ApplyAsync_RecordsCurrentRevisionWhenManagedFilesAreAlreadyCurrent()
+    {
+        var game = Path.Combine(_root, "game-revision-only");
+        var plugins = Path.Combine(game, "BepInEx", "plugins");
+        Directory.CreateDirectory(plugins);
+        await File.WriteAllTextAsync(Path.Combine(plugins, "Same.dll"), "same-content");
+
+        var archive = CreateZip(("BepInEx/plugins/Same.dll", "same-content"));
+        var oldPackage = Package("Same-Mod", "1.0.0", archive,
+            new ClientPackageFile("BepInEx/plugins/Same.dll", Sha("same-content")));
+        var oldManifest = Manifest(oldPackage) with { Revision = "revision-old" };
+        var updaterRoot = Path.Combine(game, ".gamepanel-updater");
+        Directory.CreateDirectory(updaterRoot);
+        await File.WriteAllTextAsync(
+            Path.Combine(updaterRoot, "current-manifest.json"),
+            System.Text.Json.JsonSerializer.Serialize(oldManifest, new System.Text.Json.JsonSerializerOptions
+            {
+                PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase,
+            }));
+
+        var currentManifest = Manifest(oldPackage) with { Revision = "revision-new" };
+        var installer = new PackageInstaller();
+
+        var result = await installer.ApplyAsync(
+            game,
+            currentManifest,
+            (_, _) => Task.FromResult<Stream>(new MemoryStream(archive)),
+            checkOnly: false);
+
+        var state = await File.ReadAllTextAsync(Path.Combine(updaterRoot, "current-manifest.json"));
+        Assert.Empty(result.ChangedFiles);
+        Assert.Contains("revision-new", state);
+        Assert.DoesNotContain("revision-old", state);
+    }
+
+    [Fact]
     public void ValidateManifest_RejectsServerOnlyAndDuplicatePaths()
     {
         var file = new ClientPackageFile("BepInEx/plugins/X.dll", Sha("x"));
