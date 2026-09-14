@@ -5,12 +5,13 @@
 - Added `client/GamePanel.ClientUpdater`: self-contained Windows x64 console updater for authenticated, pinned client modpacks.
 - It validates API origin, archive and per-file SHA-256 values, ZIP paths/symlinks, target allowlists, and performs backup/rollback transactions under `.gamepanel-updater/`.
 - The dedicated Tailscale listener on port `5001` proxies login to the existing API and serves only authenticated, pinned manifest/package paths; the main API on port `5000` is unchanged.
-- The root-owned revision `valheim-client-bepinex-5.4.2350-planteverything-1.21.2` is the current approved client manifest.
+- The root-owned revision `valheim-full-sync-20260914` is the current approved client manifest: 15 pinned packages, 239 files and 13,007,888 compressed download bytes.
 - The updater now backs up and removes files managed by the previous manifest when they are absent from the current revision; unmanaged files remain untouched.
 - Built artifact: `client/artifacts/win-x64/GamePanel.ClientUpdater.exe` (SHA-256 `22f690662530640251dd87e1f4800fcbb983470d8594e7916c0616535b21e48e`).
 - Lab verification: `Advize/PlantEverything` `1.21.2` with BepInExPack `5.4.2350` loaded successfully on build `25253791`; a real client connected and confirmed the mod works. The isolated service is stopped, its temporary Tailscale UDP `2466:2467` rule was removed, and production remained untouched.
 - Deployed the additive Nginx listener on `100.82.102.38:5001` with an exact `tailscale0` firewall rule. EXE/checksum return `200`; manifest/packages return `401` without a token; unrelated API paths return `404`.
 - The current production Valheim invocation already loads BepInExPack `5.4.2350` and PlantEverything `1.21.2`. Client-sync deployment did not restart the API or either game service; their PIDs remained unchanged.
+- A real Windows client applied `valheim-full-sync-20260914` and connected successfully. The server confirmed network protocol `40` plus matching PlantEverything `1.21.2`, AzuCraftyBoxes `1.8.18`, Seasonality `3.8.3`, and Quick Stack `1.4.15`; the candidate was then atomically promoted to `current` with the prior revision retained for rollback.
 
 ## Current implementation status — 2026-09-10
 
