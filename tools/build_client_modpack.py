@@ -48,7 +48,10 @@ def digest(path: Path) -> str:
 
 
 def safe_name(value: str) -> str:
-    if not isinstance(value, str) or not value or "\\" in value or "\x00" in value or value.startswith("/"):
+    if not isinstance(value, str) or not value or "\x00" in value:
+        raise BuildError("unsafe archive path")
+    value = value.replace("\\", "/")
+    if value.startswith("/") or re.match(r"^[A-Za-z]:", value):
         raise BuildError("unsafe archive path")
     normalized = posixpath.normpath(value)
     if normalized != value or normalized in {".", ".."} or normalized.startswith("../"):
@@ -76,17 +79,11 @@ def normalize_path(source: str, package: ClientPackage) -> str | None:
         source = source[len(wrapper):]
     if source.lower() in METADATA:
         return None
-    if package.target == "client-only":
-        if source.startswith("BepInEx/") or source.startswith("doorstop_libs/") or source in LOADER_ROOT:
-            return source
-        raise BuildError(f"loader route is not allowed: {source}")
-    if source.startswith("BepInEx/plugins/") or source.startswith("BepInEx/config/"):
+    if source.startswith("BepInEx/") or source.startswith("doorstop_libs/") or source in LOADER_ROOT:
         return source
-    if source.startswith("plugins/") or source.startswith("config/"):
+    if source.startswith("plugins/"):
         return "BepInEx/" + source
-    if "/" not in source and source.lower().endswith(".dll"):
-        return f"BepInEx/plugins/{package.package_id}/{source}"
-    raise BuildError(f"mod route is not allowed: {source}")
+    return f"BepInEx/plugins/{package.package_id}/{source}"
 
 
 def build_one(package: ClientPackage, destination: Path) -> dict:

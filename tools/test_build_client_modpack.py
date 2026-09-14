@@ -64,6 +64,65 @@ class ClientModpackBuilderTests(unittest.TestCase):
                 ClientPackage("Advize-PlantEverything", "PlantEverything", "1.21.2", "client-server", self.mod, "0" * 64, []),
             ])
 
+    def test_normalizes_client_only_mod_files_under_package_directory(self):
+        archive_path = self.root / "client-only.zip"
+        make_zip(archive_path, [
+            ("manifest.json", json.dumps({"name": "ClientQoL", "version_number": "1.0.0", "dependencies": []})),
+            ("ClientQoL.dll", b"plugin"),
+        ])
+
+        out = self.root / "out-client-only"
+        build_modpack(out, "client-only-1", [
+            ClientPackage("Author-ClientQoL", "ClientQoL", "1.0.0", "client-only", archive_path, sha(archive_path), []),
+        ])
+
+        with zipfile.ZipFile(out / "packages" / "Author-ClientQoL" / "1.0.0.zip") as archive:
+            self.assertIn("BepInEx/plugins/Author-ClientQoL/ClientQoL.dll", archive.namelist())
+
+    def test_keeps_package_config_assets_beside_the_plugin(self):
+        archive_path = self.root / "assets.zip"
+        make_zip(archive_path, [
+            ("manifest.json", json.dumps({"name": "Seasonal", "version_number": "1.0.0", "dependencies": []})),
+            ("Seasonal.dll", b"plugin"),
+            ("config/Seasonal/texture.png", b"asset"),
+        ])
+
+        out = self.root / "out-assets"
+        build_modpack(out, "assets-1", [
+            ClientPackage("Author-Seasonal", "Seasonal", "1.0.0", "client-server", archive_path, sha(archive_path), []),
+        ])
+
+        with zipfile.ZipFile(out / "packages" / "Author-Seasonal" / "1.0.0.zip") as archive:
+            self.assertIn("BepInEx/plugins/Author-Seasonal/config/Seasonal/texture.png", archive.namelist())
+
+    def test_normalizes_legacy_backslash_separators(self):
+        archive_path = self.root / "backslash-only.zip"
+        make_zip(archive_path, [
+            ("manifest.json", json.dumps({"name": "Legacy", "version_number": "1.0.0", "dependencies": []})),
+            ("plugins\\Legacy.dll", b"plugin"),
+        ])
+
+        out = self.root / "out-backslash-only"
+        build_modpack(out, "backslash-only-1", [
+            ClientPackage("Author-Legacy", "Legacy", "1.0.0", "client-only", archive_path, sha(archive_path), []),
+        ])
+
+        with zipfile.ZipFile(out / "packages" / "Author-Legacy" / "1.0.0.zip") as archive:
+            self.assertIn("BepInEx/plugins/Legacy.dll", archive.namelist())
+
+    def test_rejects_paths_that_collide_after_separator_normalization(self):
+        archive_path = self.root / "backslash.zip"
+        make_zip(archive_path, [
+            ("manifest.json", json.dumps({"name": "Legacy", "version_number": "1.0.0", "dependencies": []})),
+            ("plugins\\Legacy.dll", b"one"),
+            ("plugins/Legacy.dll", b"two"),
+        ])
+
+        with self.assertRaisesRegex(BuildError, "duplicate normalized client path"):
+            build_modpack(self.root / "out-backslash", "backslash-1", [
+                ClientPackage("Author-Legacy", "Legacy", "1.0.0", "client-only", archive_path, sha(archive_path), []),
+            ])
+
 
 if __name__ == "__main__":
     unittest.main()
