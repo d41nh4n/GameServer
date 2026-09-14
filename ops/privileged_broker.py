@@ -28,11 +28,24 @@ def fsync_dir(p):
 def set_runtime_permissions(server,dst,gid):
  cur=dst.parent
  while cur != server:
-  os.chmod(cur,0o750)
+  os.chmod(cur,0o770 if cur == server/"BepInEx" or server/"BepInEx" in cur.parents else 0o750)
   if os.geteuid()==0: os.chown(cur,0,gid,follow_symlinks=False)
   cur=cur.parent
- os.chmod(dst,0o640)
+ writable=server/"BepInEx/config" in dst.parents or server/"BepInEx/cache" in dst.parents or dst.name in {"0Harmony.dll","0Harmony20.dll"}
+ os.chmod(dst,0o660 if writable else 0o640)
  if os.geteuid()==0: os.chown(dst,0,gid,follow_symlinks=False)
+def normalize_runtime_files(server,gid):
+ root=server/"BepInEx"
+ for p in (root/"LogOutput.log",):
+  if p.is_file() and not p.is_symlink():
+   os.chmod(p,0o660)
+   if os.geteuid()==0: os.chown(p,0,gid,follow_symlinks=False)
+ cache=root/"cache"
+ if cache.is_dir() and not cache.is_symlink():
+  for p in cache.rglob("*"):
+   if p.is_file() and not p.is_symlink():
+    os.chmod(p,0o660)
+    if os.geteuid()==0: os.chown(p,0,gid,follow_symlinks=False)
 def safe_rel(n):
  if not isinstance(n,str) or not n or "\\" in n or "\x00" in n or n.startswith("/") or (len(n)>1 and n[1]==":"): fail("unsafe path")
  x=posixpath.normpath(n)
@@ -231,6 +244,7 @@ class Broker:
    for x in items:
     src=root/"files"/x["destination"]; dst=server/x["destination"]; dst.parent.mkdir(parents=True,exist_ok=True); fd,tmp=tempfile.mkstemp(prefix=".gamepanel-",dir=dst.parent); os.close(fd); shutil.copyfile(src,tmp); fsync_file(tmp); os.replace(tmp,dst); set_runtime_permissions(server,dst,self.valheim_gid); fsync_dir(dst.parent)
    for entry in launchers: self.install_launcher(entry)
+   normalize_runtime_files(server,self.valheim_gid)
    for x in items:
     if digest(server/x["destination"]).lower()!=x["sha256"].lower(): fail("installed hash mismatch")
    self.controller.start("valheim-main")

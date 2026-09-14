@@ -4,7 +4,7 @@ from unittest.mock import patch
 from fcntl import flock, LOCK_EX
 import sys
 sys.path.insert(0,str(Path(__file__).resolve().parent))
-from privileged_broker import Broker, BrokerError, digest, load_config
+from privileged_broker import Broker, BrokerError, digest, load_config, normalize_runtime_files, set_runtime_permissions
 
 class C:
  def __init__(self,start_ok=True,healthy=True): self.active='inactive'; self.start_ok=start_ok; self.healthy=healthy; self.started=0
@@ -59,6 +59,23 @@ class Tests(unittest.TestCase):
   c=C(); q=self.deployed(c); self.b.handle(q)
   p=self.server/'BepInEx/plugins/x.dll'
   self.assertEqual(p.stat().st_mode & 0o777,0o640)
+  self.assertEqual((self.server/'BepInEx').stat().st_mode & 0o777,0o770)
+  self.assertEqual((self.server/'BepInEx/plugins').stat().st_mode & 0o777,0o770)
+  self.assertEqual((self.server/'BepInEx/plugins/x.dll').stat().st_mode & 0o777,0o640)
+
+ def test_bepinex_config_is_runtime_writable(self):
+  p=self.server/'BepInEx/config/BepInEx.cfg'; p.parent.mkdir(parents=True); p.write_bytes(b'cfg'); set_runtime_permissions(self.server,p,os.getgid())
+  self.assertEqual(p.stat().st_mode & 0o777,0o660)
+
+ def test_harmony_and_cache_are_runtime_writable(self):
+  harmony=self.server/'BepInEx/core/0Harmony.dll'; cache=self.server/'BepInEx/cache/harmony_interop_cache.dat'
+  harmony.parent.mkdir(parents=True); cache.parent.mkdir(parents=True); harmony.write_bytes(b'dll'); cache.write_bytes(b'cache')
+  set_runtime_permissions(self.server,harmony,os.getgid()); set_runtime_permissions(self.server,cache,os.getgid())
+  self.assertEqual(harmony.stat().st_mode & 0o777,0o660); self.assertEqual(cache.stat().st_mode & 0o777,0o660)
+
+ def test_existing_bepinex_log_is_runtime_writable(self):
+  p=self.server/'BepInEx/LogOutput.log'; p.parent.mkdir(parents=True); p.write_bytes(b'log'); normalize_runtime_files(self.server,os.getgid())
+  self.assertEqual(p.stat().st_mode & 0o777,0o660)
 
  def test_partial_copy_failure_rolls_back(self):
   c=C(); q=self.deployed(c)
