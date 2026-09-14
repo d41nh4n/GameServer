@@ -25,6 +25,14 @@ def fsync_file(p):
  with open(p,"rb") as f: os.fsync(f.fileno())
 def fsync_dir(p):
  fd=os.open(p,os.O_RDONLY|os.O_DIRECTORY); os.fsync(fd); os.close(fd)
+def set_runtime_permissions(server,dst,gid):
+ cur=dst.parent
+ while cur != server:
+  os.chmod(cur,0o750)
+  if os.geteuid()==0: os.chown(cur,0,gid,follow_symlinks=False)
+  cur=cur.parent
+ os.chmod(dst,0o640)
+ if os.geteuid()==0: os.chown(dst,0,gid,follow_symlinks=False)
 def safe_rel(n):
  if not isinstance(n,str) or not n or "\\" in n or "\x00" in n or n.startswith("/") or (len(n)>1 and n[1]==":"): fail("unsafe path")
  x=posixpath.normpath(n)
@@ -181,7 +189,10 @@ class Broker:
   if journal.exists():
    old=json.loads(journal.read_text())
    if action=="rollback": return self.rollback_journal(old)
-   fail("transaction already exists")
+   if old.get("state")=="rolled-back":
+    archived=journal.parent/("transaction-"+uuid.uuid4().hex+".rolled-back.json")
+    os.replace(journal,archived); fsync_dir(journal.parent)
+   else: fail("transaction already exists")
   server=Path(self.cfg["instances"]["valheim-main"]["root"])/"server"; backup=journal.parent/"backup"; backup.mkdir(parents=True,exist_ok=True)
   records=[]
   for x in items:
@@ -194,7 +205,7 @@ class Broker:
   try:
    j["state"]="applying"; journal.write_text(json.dumps(j,indent=2)+"\n")
    for x in items:
-    src=root/"files"/x["destination"]; dst=server/x["destination"]; dst.parent.mkdir(parents=True,exist_ok=True); fd,tmp=tempfile.mkstemp(prefix=".gamepanel-",dir=dst.parent); os.close(fd); shutil.copyfile(src,tmp); fsync_file(tmp); os.replace(tmp,dst); fsync_dir(dst.parent)
+    src=root/"files"/x["destination"]; dst=server/x["destination"]; dst.parent.mkdir(parents=True,exist_ok=True); fd,tmp=tempfile.mkstemp(prefix=".gamepanel-",dir=dst.parent); os.close(fd); shutil.copyfile(src,tmp); fsync_file(tmp); os.replace(tmp,dst); set_runtime_permissions(server,dst,self.valheim_gid); fsync_dir(dst.parent)
    for x in items:
     if digest(server/x["destination"]).lower()!=x["sha256"].lower(): fail("installed hash mismatch")
    self.controller.start("valheim-main")

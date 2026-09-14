@@ -41,6 +41,11 @@ class Tests(unittest.TestCase):
  def deployed(self,controller=None):
   if controller: self.b.controller=controller
   self.seal(); self.b.enabled=True; q=self.req('deploy'); return q
+ def test_deploy_installs_valheim_readable_file_mode(self):
+  c=C(); q=self.deployed(c); self.b.handle(q)
+  p=self.server/'BepInEx/plugins/x.dll'
+  self.assertEqual(p.stat().st_mode & 0o777,0o640)
+
  def test_partial_copy_failure_rolls_back(self):
   c=C(); q=self.deployed(c)
   with patch('privileged_broker.shutil.copyfile',side_effect=OSError('partial')): self.assertRaises(OSError,self.b.handle,q)
@@ -53,6 +58,13 @@ class Tests(unittest.TestCase):
   c=C(start_ok=False); q=self.deployed(c); self.assertRaises(RuntimeError,self.b.handle,q); self.assertFalse((self.server/'BepInEx/plugins/x.dll').exists())
  def test_health_failure_rolls_back(self):
   c=C(healthy=False); q=self.deployed(c); self.assertRaises(BrokerError,self.b.handle,q); self.assertFalse((self.server/'BepInEx/plugins/x.dll').exists()); self.assertEqual(c.active,'inactive')
+ def test_rolled_back_deployment_can_retry_with_same_unused_approval(self):
+  c=C(healthy=False); q=self.deployed(c)
+  self.assertRaises(BrokerError,self.b.handle,q)
+  c.healthy=True
+  result=self.b.handle(self.req('deploy'))
+  self.assertEqual(result['state'],'transactional-deployed')
+
  def test_rollback_twice_idempotent(self):
   c=C(); q=self.deployed(c); self.b.handle(q); r=self.req('rollback'); self.assertEqual(self.b.handle(r)['state'],'rolled-back'); self.assertEqual(self.b.handle(self.req('rollback'))['state'],'rolled-back')
  def test_interrupted_transaction_recovery_blocks(self):
