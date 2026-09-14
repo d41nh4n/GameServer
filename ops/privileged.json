@@ -12,7 +12,11 @@
     "productionMods": "/srv/gamepanel/instances/valheim-main/mods/packages",
     "productionBackup": "/srv/gamepanel/instances/valheim-main/backups/mod-deployments",
     "stagingRoot": "/srv/gamepanel/instances/valheim-main/mods/staging",
-    "brokerState": "/srv/gamepanel/instances/valheim-main/backups/mod-deployments/broker-state"
+    "brokerState": "/srv/gamepanel/instances/valheim-main/backups/mod-deployments/broker-state",
+    "launcherSource": "/usr/local/libexec/gamepanel-reviewed-valheim-main-start",
+    "managedLauncherSource": "/usr/local/libexec/gamepanel-reviewed-valheim-managed-launcher",
+    "launcherTarget": "/usr/local/libexec/valheim-main-start",
+    "managedLauncherTarget": "/usr/local/libexec/valheim-managed-launcher"
   },
   "features": {
     "productionDeploymentEnabled": false

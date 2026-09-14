@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+readonly SERVER_ROOT="${GAMEPANEL_VALHEIM_SERVER_ROOT:-/srv/gamepanel/instances/valheim-main/server}"
+readonly DATA_ROOT="${GAMEPANEL_VALHEIM_DATA_ROOT:-/srv/gamepanel/instances/valheim-main/data}"
+readonly RUNTIME_ROOT="${GAMEPANEL_VALHEIM_RUNTIME_ROOT:-/srv/gamepanel/instances/valheim-main/runtime}"
+readonly MODIFIERS_FILE="$DATA_ROOT/panel-modifiers.env"
+readonly MANAGED_LAUNCHER="${GAMEPANEL_VALHEIM_MANAGED_LAUNCHER:-/usr/local/libexec/valheim-managed-launcher}"
+
+: "${VALHEIM_SERVER_NAME:?VALHEIM_SERVER_NAME is required}"
+: "${VALHEIM_WORLD_NAME:?VALHEIM_WORLD_NAME is required}"
+: "${VALHEIM_PASSWORD:?VALHEIM_PASSWORD is required}"
+: "${VALHEIM_PORT:?VALHEIM_PORT is required}"
+: "${VALHEIM_PUBLIC:?VALHEIM_PUBLIC is required}"
+
+if [[ ${#VALHEIM_PASSWORD} -lt 5 ]]; then
+    echo "Valheim password must contain at least 5 characters." >&2
+    exit 20
+fi
+if [[ ! "$VALHEIM_PORT" =~ ^[0-9]+$ ]]; then
+    echo "VALHEIM_PORT must be numeric." >&2
+    exit 21
+fi
+if [[ "$VALHEIM_PUBLIC" != "0" && "$VALHEIM_PUBLIC" != "1" ]]; then
+    echo "VALHEIM_PUBLIC must be 0 or 1." >&2
+    exit 22
+fi
+
+export HOME="$RUNTIME_ROOT"
+export SteamAppId="892970"
+export GAMEPANEL_VALHEIM_SERVER_ROOT="$SERVER_ROOT"
+export LD_LIBRARY_PATH="$SERVER_ROOT/linux64:${LD_LIBRARY_PATH:-}"
+
+if [[ "${VALHEIM_VERSION_CHECK:-1}" != "0" ]]; then
+    /usr/local/sbin/gamepanel-valheim-version-check
+fi
+
+MODIFIER_ARGS=()
+if [[ -r "$MODIFIERS_FILE" ]]; then
+    # The helper creates this root-owned/valheim-readable file using an allowlist.
+    # shellcheck disable=SC1090
+    source "$MODIFIERS_FILE"
+    [[ -z "${VALHEIM_MODIFIER_COMBAT:-}" ]] || MODIFIER_ARGS+=( -modifier combat "$VALHEIM_MODIFIER_COMBAT" )
+    [[ -z "${VALHEIM_MODIFIER_RESOURCES:-}" ]] || MODIFIER_ARGS+=( -modifier resources "$VALHEIM_MODIFIER_RESOURCES" )
+    [[ -z "${VALHEIM_MODIFIER_RAIDS:-}" ]] || MODIFIER_ARGS+=( -modifier raids "$VALHEIM_MODIFIER_RAIDS" )
+    [[ -z "${VALHEIM_MODIFIER_DEATHPENALTY:-}" ]] || MODIFIER_ARGS+=( -modifier deathpenalty "$VALHEIM_MODIFIER_DEATHPENALTY" )
+    [[ -z "${VALHEIM_MODIFIER_PORTALS:-}" ]] || MODIFIER_ARGS+=( -modifier portals "$VALHEIM_MODIFIER_PORTALS" )
+    [[ "${VALHEIM_SETKEY_PASSIVEMOBS:-0}" != 1 ]] || MODIFIER_ARGS+=( -setkey passivemobs )
+    [[ "${VALHEIM_SETKEY_PLAYEREVENTS:-0}" != 1 ]] || MODIFIER_ARGS+=( -setkey playerevents )
+    [[ "${VALHEIM_SETKEY_HAMMERMODE:-0}" != 1 ]] || MODIFIER_ARGS+=( -setkey nobuildcost )
+    [[ "${VALHEIM_SETKEY_NOBUILDCOST:-0}" != 1 ]] || MODIFIER_ARGS+=( -setkey nobuildcost )
+fi
+
+cd "$SERVER_ROOT"
+exec "$MANAGED_LAUNCHER" ./valheim_server.x86_64 \
+    -nographics -batchmode \
+    -name "$VALHEIM_SERVER_NAME" \
+    -port "$VALHEIM_PORT" \
+    -world "$VALHEIM_WORLD_NAME" \
+    -password "$VALHEIM_PASSWORD" \
+    -savedir "$DATA_ROOT" \
+    -public "$VALHEIM_PUBLIC" \
+    "${MODIFIER_ARGS[@]}"

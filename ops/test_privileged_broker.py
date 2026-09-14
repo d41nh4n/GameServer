@@ -21,7 +21,8 @@ class Tests(unittest.TestCase):
   self.t=tempfile.TemporaryDirectory(); r=Path(self.t.name); self.stage=r/'stage'; self.mods=r/'mods'; self.back=r/'back'; self.server=r/'server'; (self.stage/'normalized').mkdir(parents=True); self.server.mkdir()
   (self.stage/'normalized'/'x.dll').write_bytes(b'new'); h=digest(self.stage/'normalized'/'x.dll')
   self.did='dep-test-001'; self.base={'instanceId':'valheim-main','deploymentId':self.did,'packageId':'Author-Mod','version':'1.0.0','packageType':'loader','targetPlatform':'linux-x64','testedGameBuild':'25253791','state':'lab-tested','archiveSha256':'a'*64,'files':[{'source':'x.dll','destination':'BepInEx/plugins/x.dll','sha256':h}],'dependencies':[],'platformExcluded':[{'source':'winhttp.dll','reason':'platform-excluded'}]}
-  (self.stage/'deployment-manifest.json').write_text(json.dumps(self.base)); self.cfg={'backendUid':os.getuid(),'valheimUid':os.getuid(),'requireRootOwnership':False,'instances':{'valheim-main':{'service':'fake','root':str(r),'testedBuild':'25253791'},'pz-main':{'service':'pz','root':str(r/'pz'),'ports':[],'testedBuild':''}},'paths':{'stagingRoot':str(r/'stage-root'),'productionMods':str(self.mods),'productionBackup':str(self.back),'brokerState':str(r/'state')}}
+  (self.stage/'deployment-manifest.json').write_text(json.dumps(self.base)); self.cfg={'backendUid':os.getuid(),'valheimUid':os.getuid(),'requireRootOwnership':False,'instances':{'valheim-main':{'service':'fake','root':str(r),'testedBuild':'25253791'},'pz-main':{'service':'pz','root':str(r/'pz'),'ports':[],'testedBuild':''}},'paths':{'stagingRoot':str(r/'stage-root'),'productionMods':str(self.mods),'productionBackup':str(self.back),'brokerState':str(r/'state'),'launcherSource':str(r/'source-main'),'managedLauncherSource':str(r/'source-managed'),'launcherTarget':str(r/'launcher-main'),'managedLauncherTarget':str(r/'launcher-managed')}}
+  (Path(self.cfg['paths']['launcherSource'])).write_bytes(b'#!/bin/sh\nexec managed\n'); (Path(self.cfg['paths']['managedLauncherSource'])).write_bytes(b'#!/bin/sh\nexec "$@"\n');
   # use the fixed staging root and deployment tree
   (Path(self.cfg['paths']['stagingRoot'])/self.did/'normalized').parent.mkdir(parents=True); import shutil; shutil.copytree(self.stage,Path(self.cfg['paths']['stagingRoot'])/self.did,dirs_exist_ok=True)
   self.b=Broker(self.cfg,C(),uid=os.getuid()); self.req=lambda action='seal',did=self.did:{'requestVersion':1,'requestId':str(uuid.uuid4()),'action':action,'instanceId':'valheim-main','deploymentId':did}
@@ -41,6 +42,19 @@ class Tests(unittest.TestCase):
  def deployed(self,controller=None):
   if controller: self.b.controller=controller
   self.seal(); self.b.enabled=True; q=self.req('deploy'); return q
+ def test_deploy_installs_and_journals_launchers(self):
+  c=C(); q=self.deployed(c); self.b.handle(q)
+  self.assertEqual((Path(self.cfg['paths']['launcherTarget'])).read_text(),'#!/bin/sh\nexec managed\n')
+  self.assertEqual((Path(self.cfg['paths']['managedLauncherTarget'])).read_text(),'#!/bin/sh\nexec "$@"\n')
+  journal=json.loads((self.back/self.did/'transaction.json').read_text())
+  self.assertEqual({r['kind'] for r in journal['records'] if r['kind']=='launcher'},{'launcher'})
+
+ def test_deploy_requires_launcher_artifacts(self):
+  Path(self.cfg['paths']['managedLauncherSource']).unlink(); c=C(); q=self.deployed(c); self.assertRaises(BrokerError,self.b.handle,q)
+
+ def test_deploy_requires_root_owned_launcher_artifacts(self):
+  self.b.cfg['requireRootOwnership']=True; c=C(); q=self.deployed(c); self.assertRaises(BrokerError,self.b.handle,q)
+
  def test_deploy_installs_valheim_readable_file_mode(self):
   c=C(); q=self.deployed(c); self.b.handle(q)
   p=self.server/'BepInEx/plugins/x.dll'

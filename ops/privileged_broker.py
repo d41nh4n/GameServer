@@ -170,6 +170,24 @@ class Broker:
    items.append({"destination":rel,"sha256":digest(p),"sizeBytes":p.stat().st_size})
   if tree_hash(items)!=a["normalizedTreeHash"]: fail("sealed tree mismatch")
   return root,a,m,items
+ def launcher_entries(self):
+  paths=self.cfg["paths"]
+  required=(("main", "launcherSource", "launcherTarget"),("managed", "managedLauncherSource", "managedLauncherTarget"))
+  entries=[]
+  for kind,source_key,target_key in required:
+   src=Path(paths.get(source_key,"")); dst=Path(paths.get(target_key,""))
+   if not src.is_file() or src.is_symlink(): fail("launcher artifact missing or unsafe")
+   if self.cfg.get("requireRootOwnership",True) and src.stat().st_uid!=0: fail("launcher artifact is not root-owned")
+   if not dst.is_absolute() or dst.is_symlink(): fail("launcher target invalid")
+   entries.append({"kind":"launcher","name":kind,"source":str(src),"destination":str(dst)})
+  return entries
+ def install_launcher(self,entry):
+  src=Path(entry["source"]); dst=Path(entry["destination"]); dst.parent.mkdir(parents=True,exist_ok=True)
+  fd,tmp=tempfile.mkstemp(prefix=".gamepanel-launcher-",dir=dst.parent); os.close(fd)
+  try:
+   shutil.copyfile(src,tmp); os.chmod(tmp,src.stat().st_mode & 0o777); fsync_file(tmp); os.replace(tmp,dst); fsync_dir(dst.parent)
+  finally:
+   Path(tmp).unlink(missing_ok=True)
  def transaction(self,req,action):
   self.peer(True); self.replay_check(req["requestId"],True)
   if not self.enabled: fail("production deployment feature disabled")
@@ -193,19 +211,26 @@ class Broker:
     archived=journal.parent/("transaction-"+uuid.uuid4().hex+".rolled-back.json")
     os.replace(journal,archived); fsync_dir(journal.parent)
    else: fail("transaction already exists")
-  server=Path(self.cfg["instances"]["valheim-main"]["root"])/"server"; backup=journal.parent/"backup"; backup.mkdir(parents=True,exist_ok=True)
+  server=Path(self.cfg["instances"][req["instanceId"]]["root"])/"server"; backup=journal.parent/"backup"; backup.mkdir(parents=True,exist_ok=True); launchers=self.launcher_entries()
   records=[]
   for x in items:
    dst=server/x["destination"]; exists=dst.exists(); rec={"destination":x["destination"],"created":not exists,"backup":None}
    if exists:
     if dst.is_symlink() or not dst.is_file(): fail("unsafe production target")
     b=backup/x["destination"]; b.parent.mkdir(parents=True,exist_ok=True); shutil.copy2(dst,b); rec["backup"]=str(b)
+   rec["kind"]="package"; records.append(rec)
+  for entry in launchers:
+   dst=Path(entry["destination"]); exists=dst.exists(); rec={"kind":"launcher","name":entry["name"],"destination":entry["destination"],"created":not exists,"backup":None}
+   if exists:
+    if dst.is_symlink() or not dst.is_file(): fail("unsafe launcher target")
+    b=backup/"launchers"/entry["name"]; b.parent.mkdir(parents=True,exist_ok=True); shutil.copy2(dst,b); rec["backup"]=str(b)
    records.append(rec)
   j={"deploymentId":req["deploymentId"],"state":"prepared","initialStatus":s,"records":records,"sealedRoot":str(root),"instanceId":"valheim-main"}; journal.write_text(json.dumps(j,indent=2)+"\n"); fsync_file(journal); fsync_dir(journal.parent)
   try:
    j["state"]="applying"; journal.write_text(json.dumps(j,indent=2)+"\n")
    for x in items:
     src=root/"files"/x["destination"]; dst=server/x["destination"]; dst.parent.mkdir(parents=True,exist_ok=True); fd,tmp=tempfile.mkstemp(prefix=".gamepanel-",dir=dst.parent); os.close(fd); shutil.copyfile(src,tmp); fsync_file(tmp); os.replace(tmp,dst); set_runtime_permissions(server,dst,self.valheim_gid); fsync_dir(dst.parent)
+   for entry in launchers: self.install_launcher(entry)
    for x in items:
     if digest(server/x["destination"]).lower()!=x["sha256"].lower(): fail("installed hash mismatch")
    self.controller.start("valheim-main")
