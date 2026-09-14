@@ -63,7 +63,7 @@ public sealed class ValheimModService
 
             if (!isDll && !isDisabled) continue;
 
-            var relativePath = Path.GetRelativePath(_pluginsDir, file).Replace('\\', '/');
+            var relativePath = ToApiRelativePath(Path.GetRelativePath(_pluginsDir, file));
             var fi = new FileInfo(file);
 
             var name = fileName;
@@ -116,7 +116,7 @@ public sealed class ValheimModService
 
         var fi = new FileInfo(newFullPath);
         var fileName = Path.GetFileName(newFullPath);
-        var newRelPath = Path.GetRelativePath(_pluginsDir, newFullPath).Replace('\\', '/');
+        var newRelPath = ToApiRelativePath(Path.GetRelativePath(_pluginsDir, newFullPath));
         var name = fileName;
         if (name.EndsWith(".disabled", StringComparison.OrdinalIgnoreCase))
             name = name[..^".disabled".Length];
@@ -259,44 +259,51 @@ public sealed class ValheimModService
         if (!Directory.Exists(_pluginsDir)) Directory.CreateDirectory(_pluginsDir);
         if (!Directory.Exists(_configDir)) Directory.CreateDirectory(_configDir);
 
-        var hasPluginsPrefix = archive.Entries.Any(e =>
-            e.FullName.StartsWith("plugins/", StringComparison.OrdinalIgnoreCase) ||
-            e.FullName.StartsWith("BepInEx/plugins/", StringComparison.OrdinalIgnoreCase));
+        var fileEntries = archive.Entries
+            .Where(entry => !IsArchiveDirectory(entry))
+            .Select(entry => (Entry: entry, Path: NormalizeArchiveEntryPath(entry.FullName)))
+            .ToList();
+        var hasPluginsPrefix = fileEntries.Any(item =>
+            item.Path.StartsWith("plugins/", StringComparison.OrdinalIgnoreCase) ||
+            item.Path.StartsWith("BepInEx/plugins/", StringComparison.OrdinalIgnoreCase));
 
         var cleanPackageName = Path.GetFileName(packageFullName.Replace('\\', '/').Trim('/'));
         if (string.IsNullOrWhiteSpace(cleanPackageName)) cleanPackageName = "UnknownMod";
 
-        foreach (var entry in archive.Entries)
+        var extractionPlan = new List<(ZipArchiveEntry Entry, string DestinationPath)>();
+        var plannedDestinations = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var item in fileEntries)
         {
-            if (string.IsNullOrEmpty(entry.Name)) continue;
-
+            var entry = item.Entry;
+            var entryPath = item.Path;
+            var entryName = Path.GetFileName(entryPath);
             string destinationPath;
 
             if (hasPluginsPrefix)
             {
-                if (entry.FullName.StartsWith("BepInEx/plugins/", StringComparison.OrdinalIgnoreCase))
+                if (entryPath.StartsWith("BepInEx/plugins/", StringComparison.OrdinalIgnoreCase))
                 {
-                    var sub = entry.FullName["BepInEx/plugins/".Length..];
+                    var sub = entryPath["BepInEx/plugins/".Length..];
                     destinationPath = Path.GetFullPath(Path.Combine(_pluginsDir, sub));
                 }
-                else if (entry.FullName.StartsWith("plugins/", StringComparison.OrdinalIgnoreCase))
+                else if (entryPath.StartsWith("plugins/", StringComparison.OrdinalIgnoreCase))
                 {
-                    var sub = entry.FullName["plugins/".Length..];
+                    var sub = entryPath["plugins/".Length..];
                     destinationPath = Path.GetFullPath(Path.Combine(_pluginsDir, sub));
                 }
-                else if (entry.FullName.StartsWith("BepInEx/config/", StringComparison.OrdinalIgnoreCase))
+                else if (entryPath.StartsWith("BepInEx/config/", StringComparison.OrdinalIgnoreCase))
                 {
-                    var sub = entry.FullName["BepInEx/config/".Length..];
+                    var sub = entryPath["BepInEx/config/".Length..];
                     destinationPath = Path.GetFullPath(Path.Combine(_configDir, sub));
                 }
-                else if (entry.FullName.StartsWith("config/", StringComparison.OrdinalIgnoreCase))
+                else if (entryPath.StartsWith("config/", StringComparison.OrdinalIgnoreCase))
                 {
-                    var sub = entry.FullName["config/".Length..];
+                    var sub = entryPath["config/".Length..];
                     destinationPath = Path.GetFullPath(Path.Combine(_configDir, sub));
                 }
-                else if (entry.Name.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
+                else if (entryName.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
                 {
-                    destinationPath = Path.GetFullPath(Path.Combine(_pluginsDir, entry.Name));
+                    destinationPath = Path.GetFullPath(Path.Combine(_pluginsDir, entryName));
                 }
                 else
                 {
@@ -305,8 +312,8 @@ public sealed class ValheimModService
             }
             else
             {
-                var ext = Path.GetExtension(entry.Name).ToLowerInvariant();
-                var lowerName = entry.Name.ToLowerInvariant();
+                var ext = Path.GetExtension(entryName).ToLowerInvariant();
+                var lowerName = entryName.ToLowerInvariant();
                 if (lowerName is "manifest.json" or "icon.png" or "readme.md" or "changelog.md")
                 {
                     continue;
@@ -314,27 +321,34 @@ public sealed class ValheimModService
 
                 if (ext == ".cfg")
                 {
-                    destinationPath = Path.GetFullPath(Path.Combine(_configDir, entry.Name));
+                    destinationPath = Path.GetFullPath(Path.Combine(_configDir, entryName));
                 }
                 else
                 {
-                    destinationPath = Path.GetFullPath(Path.Combine(_pluginsDir, cleanPackageName, entry.FullName));
+                    destinationPath = Path.GetFullPath(Path.Combine(_pluginsDir, cleanPackageName, entryPath));
                 }
             }
 
-            if (!destinationPath.StartsWith(normalizedPluginsDir, StringComparison.OrdinalIgnoreCase) &&
-                !destinationPath.StartsWith(normalizedConfigDir, StringComparison.OrdinalIgnoreCase))
+            if (!IsPathWithin(normalizedPluginsDir, destinationPath) &&
+                !IsPathWithin(normalizedConfigDir, destinationPath))
             {
-                throw new InvalidOperationException($"Zip entry attempts path traversal: {entry.FullName}");
+                throw new InvalidOperationException($"Zip entry attempts path traversal: {entryPath}");
             }
+            if (!plannedDestinations.Add(destinationPath))
+                throw new InvalidOperationException($"Duplicate normalized zip destination: {entryPath}");
 
+            extractionPlan.Add((entry, destinationPath));
+        }
+
+        foreach (var (entry, destinationPath) in extractionPlan)
+        {
             var dir = Path.GetDirectoryName(destinationPath);
             if (dir is not null && !Directory.Exists(dir)) Directory.CreateDirectory(dir);
 
             entry.ExtractToFile(destinationPath, overwrite: true);
-            createdFiles.Add(destinationPath.StartsWith(normalizedPluginsDir)
-                ? Path.GetRelativePath(_pluginsDir, destinationPath).Replace('\\', '/')
-                : Path.GetRelativePath(_configDir, destinationPath).Replace('\\', '/'));
+            createdFiles.Add(IsPathWithin(normalizedPluginsDir, destinationPath)
+                ? ToApiRelativePath(Path.GetRelativePath(_pluginsDir, destinationPath))
+                : ToApiRelativePath(Path.GetRelativePath(_configDir, destinationPath)));
         }
 
         return createdFiles;
@@ -353,7 +367,7 @@ public sealed class ValheimModService
                 if (fileName.EndsWith(".disabled", StringComparison.OrdinalIgnoreCase))
                     continue;
 
-                var rel = Path.GetRelativePath(_pluginsDir, file).Replace('\\', '/');
+                var rel = ToApiRelativePath(Path.GetRelativePath(_pluginsDir, file));
                 archive.CreateEntryFromFile(file, $"BepInEx/plugins/{rel}", CompressionLevel.Optimal);
             }
         }
@@ -363,7 +377,7 @@ public sealed class ValheimModService
             var configFiles = Directory.GetFiles(_configDir, "*.*", SearchOption.AllDirectories);
             foreach (var file in configFiles)
             {
-                var rel = Path.GetRelativePath(_configDir, file).Replace('\\', '/');
+                var rel = ToApiRelativePath(Path.GetRelativePath(_configDir, file));
                 archive.CreateEntryFromFile(file, $"BepInEx/config/{rel}", CompressionLevel.Optimal);
             }
         }
@@ -384,6 +398,40 @@ public sealed class ValheimModService
 
         return fullPath;
     }
+
+    private static bool IsArchiveDirectory(ZipArchiveEntry entry) =>
+        string.IsNullOrEmpty(entry.Name) ||
+        entry.FullName.EndsWith('/') ||
+        entry.FullName.EndsWith('\\');
+
+    private static string NormalizeArchiveEntryPath(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path) || path.Contains('\0'))
+            throw new InvalidOperationException("Zip entry path is invalid.");
+
+        var normalized = path.Replace('\\', '/');
+        if (normalized.StartsWith('/') ||
+            (normalized.Length >= 2 && char.IsLetter(normalized[0]) && normalized[1] == ':'))
+            throw new InvalidOperationException($"Zip entry attempts path traversal: {path}");
+
+        var segments = normalized.Split('/');
+        if (segments.Any(segment => string.IsNullOrEmpty(segment) || segment is "." or ".."))
+            throw new InvalidOperationException($"Zip entry attempts path traversal: {path}");
+
+        return string.Join('/', segments);
+    }
+
+    private static bool IsPathWithin(string root, string path)
+    {
+        var comparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+        var prefix = Path.TrimEndingDirectorySeparator(root) + Path.DirectorySeparatorChar;
+        return path.StartsWith(prefix, comparison);
+    }
+
+    private static string ToApiRelativePath(string path) =>
+        Path.DirectorySeparatorChar == '/' ? path : path.Replace(Path.DirectorySeparatorChar, '/');
 
     private string GetSafeConfigPath(string configFileName)
     {
