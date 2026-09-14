@@ -1,5 +1,13 @@
 # Progress
 
+## Mod archive path normalization hotfix — deployed
+
+- Thunderstore ZIP entries now normalize both `/` and `\\` before route detection and extraction; Windows-style paths such as `plugins\\AutoRepair.dll` become canonical filesystem paths.
+- Absolute paths, drive-prefixed paths, `.`/`..`, empty segments, and destinations that collide after normalization are rejected before any file is extracted.
+- Regression tests cover Windows separators, backslash traversal, and post-normalization collisions; main passed 123/123 backend tests and the production-baseline hotfix passed 105/105.
+- Production API runs hotfix revision `02c38548c360241bd3c49c24e30f82abfee4c1c0`; database counts remained 1 user and 3 servers. Valheim stayed inactive and PZ PID remained unchanged.
+- Pre-deployment API/SQLite backup: `/home/nh4n/backups/game-server-panel/api-hotfix-mod-path-20260914T174124Z`.
+
 ## Client updater — dedicated sync listener
 
 - Added `client/GamePanel.ClientUpdater`: self-contained Windows x64 console updater for authenticated, pinned client modpacks.
