@@ -9,9 +9,8 @@
 - The updater now backs up and removes files managed by the previous manifest when they are absent from the current revision; unmanaged files remain untouched.
 - Built artifact: `client/artifacts/win-x64/GamePanel.ClientUpdater.exe` (SHA-256 `22f690662530640251dd87e1f4800fcbb983470d8594e7916c0616535b21e48e`).
 - Lab verification: `Advize/PlantEverything` `1.21.2` with BepInExPack `5.4.2350` loaded successfully on build `25253791`; a real client connected and confirmed the mod works. The isolated service is stopped, its temporary Tailscale UDP `2466:2467` rule was removed, and production remained untouched.
-- Sealed deployment candidate: `advize-planteverything-1.21.2-build25253791`; broker revalidated the archive/file hashes and produced a root-owned, unreadable-by-backend approval with `used=false`. Production is still unchanged.
-- Production promotion attempt was fail-closed and rolled back: the existing production launcher does not invoke Doorstop/BepInEx, so the loader health gate did not pass. Broker file-permission handling was corrected and tested, but the production launcher integration still requires isolated lab proof. Valheim was restored to `active/running` with the original launcher; production BepInEx remains absent.
-- Production API was not restarted and no client/server/world/firewall configuration was changed.
+- Deployed the additive Nginx listener on `100.82.102.38:5001` with an exact `tailscale0` firewall rule. EXE/checksum return `200`; manifest/packages return `401` without a token; unrelated API paths return `404`.
+- The current production Valheim invocation already loads BepInExPack `5.4.2350` and PlantEverything `1.21.2`. Client-sync deployment did not restart the API or either game service; their PIDs remained unchanged.
 
 ## Current implementation status — 2026-09-10
 
