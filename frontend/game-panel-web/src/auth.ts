@@ -288,6 +288,18 @@ export class AuthProvider {
       body: JSON.stringify({ downloadUrl, packageFullName }),
     });
   }
+  async valheimThunderstoreStage(request: { deploymentId: string; packageNamespace: string; packageName: string; version: string; packageType: "plugin" | "mod"; testedGameBuild: string }): Promise<{ success: boolean; deploymentId: string; state: string; packageId: string; version: string; archiveSha256: string; fileCount: number }> {
+    return this.request("/api/valheim/mods/thunderstore/stage", {
+      method: "POST",
+      body: JSON.stringify(request),
+    });
+  }
+  async valheimModDeployment(deploymentId: string, action: "seal" | "deploy" | "rollback"): Promise<{ success: boolean; deploymentId: string; state: string }> {
+    return this.request<{ success: boolean; deploymentId: string; state: string }>(
+      `/api/valheim/mod-deployments/${encodeURIComponent(deploymentId)}/${action}`,
+      { method: "POST" },
+    );
+  }
   async valheimExportModpack(): Promise<Blob> {
     const headers = new Headers();
     if (this.token) headers.set("Authorization", `Bearer ${this.token}`);

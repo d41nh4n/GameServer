@@ -1,5 +1,15 @@
 # Progress
 
+## Client updater — code-only, not deployed
+
+- Added `client/GamePanel.ClientUpdater`: self-contained Windows x64 console updater for authenticated, pinned client modpacks.
+- It validates API origin, archive and per-file SHA-256 values, ZIP paths/symlinks, target allowlists, and performs backup/rollback transactions under `.gamepanel-updater/`.
+- Backend exposes authenticated manifest/package routes backed by a fixed-root client modpack; the root-owned revision `valheim-client-bepinex-5.4.2350-planteverything-1.21.2` is published and readable by the backend account, but the production API has not yet been restarted with these routes.
+- Built artifact: `client/artifacts/win-x64/GamePanel.ClientUpdater.exe` (SHA-256 `dc20fc6ff31dc927c6069e8b35fc1f4016218b017c1beb46ae78e392262b02c4`).
+- Lab verification: `Advize/PlantEverything` `1.21.2` with BepInExPack `5.4.2350` loaded successfully on build `25253791`; a real client connected and confirmed the mod works. The isolated service is stopped, its temporary Tailscale UDP `2466:2467` rule was removed, and production remained untouched.
+- Sealed deployment candidate: `advize-planteverything-1.21.2-build25253791`; broker revalidated the archive/file hashes and produced a root-owned, unreadable-by-backend approval with `used=false`. Production is still unchanged.
+- Production API was not restarted and no client/server/world/firewall configuration was changed.
+
 ## Current implementation status — 2026-09-10
 
 ### Backend

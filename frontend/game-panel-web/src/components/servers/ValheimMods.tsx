@@ -25,6 +25,10 @@ export default function ValheimMods({
   const [tsSearching, setTsSearching] = useState(false);
   const [tsResult, setTsResult] = useState<ThunderstoreSearchResult | null>(null);
   const [installingPkg, setInstallingPkg] = useState<string | null>(null);
+  const [deploymentId, setDeploymentId] = useState("");
+  const [deploymentBusy, setDeploymentBusy] = useState<"seal" | "deploy" | "rollback" | null>(null);
+  const [testedGameBuild, setTestedGameBuild] = useState("");
+  const [packageType, setPackageType] = useState<"plugin" | "mod">("plugin");
 
   // Config editor state
   const [configModal, setConfigModal] = useState<{
@@ -34,6 +38,31 @@ export default function ValheimMods({
   } | null>(null);
 
   const isServerStopped = serverStatus === 0;
+  const directMutationEnabled = false;
+
+  const runDeployment = async (action: "seal" | "deploy" | "rollback") => {
+    const id = deploymentId.trim();
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(id)) {
+      setMsg("❌ Deployment ID không hợp lệ.");
+      return;
+    }
+    if (action !== "seal" && !isServerStopped) {
+      setMsg("❌ Valheim phải dừng trước khi deploy hoặc rollback.");
+      return;
+    }
+    if (action !== "seal" && !window.confirm(`${action.toUpperCase()} deployment ${id}? Broker sẽ kiểm tra lại toàn bộ safety gate.`)) return;
+    setDeploymentBusy(action);
+    setMsg("");
+    try {
+      const result = await auth.valheimModDeployment(id, action);
+      setMsg(`✅ ${result.deploymentId}: ${result.state}`);
+      if (action !== "seal") void loadMods();
+    } catch (e: any) {
+      setMsg(`❌ ${e.message ?? `${action} failed`}`);
+    } finally {
+      setDeploymentBusy(null);
+    }
+  };
 
   const loadMods = useCallback(async () => {
     setLoading(true);
@@ -73,6 +102,10 @@ export default function ValheimMods({
   }, [subTab, tsResult, tsSearching, searchThunderstore]);
 
   const handleToggle = async (mod: ValheimMod) => {
+    if (!directMutationEnabled) {
+      setMsg("❌ Thay đổi trực tiếp production đã bị khóa; hãy dùng staged deployment.");
+      return;
+    }
     if (!isServerStopped) {
       setMsg("❌ Server must be stopped before toggling mods.");
       return;
@@ -93,6 +126,10 @@ export default function ValheimMods({
   };
 
   const handleDelete = async (mod: ValheimMod) => {
+    if (!directMutationEnabled) {
+      setMsg("❌ Xóa trực tiếp production đã bị khóa; hãy dùng rollback deployment.");
+      return;
+    }
     if (!isServerStopped) {
       setMsg("❌ Server must be stopped before deleting mods.");
       return;
@@ -133,6 +170,10 @@ export default function ValheimMods({
 
   const handleSaveConfig = async () => {
     if (!configModal) return;
+    if (!directMutationEnabled) {
+      setMsg("❌ Sửa config trực tiếp production đã bị khóa; hãy đóng gói config trong deployment.");
+      return;
+    }
     if (!isServerStopped) {
       setMsg("❌ Server must be stopped before saving configuration.");
       return;
@@ -151,6 +192,10 @@ export default function ValheimMods({
 
   const handleUpload = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!directMutationEnabled) {
+      setMsg("❌ Upload trực tiếp production đã bị khóa; package phải được validate, stage và lab-test.");
+      return;
+    }
     if (!selectedFile) return;
     if (!isServerStopped) {
       setMsg("❌ Server must be stopped before uploading mods.");
@@ -173,19 +218,27 @@ export default function ValheimMods({
     }
   };
 
-  const handleInstallThunderstore = async (pkg: ThunderstorePackage) => {
-    if (!isServerStopped) {
-      setMsg("❌ Server must be stopped before installing mods.");
+  const handleStageThunderstore = async (pkg: ThunderstorePackage) => {
+    const id = deploymentId.trim();
+    const build = testedGameBuild.trim();
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(id) || !/^[0-9]{1,20}$/.test(build)) {
+      setMsg("❌ Nhập Deployment ID và Steam build ID hợp lệ trước khi stage.");
       return;
     }
     setInstallingPkg(pkg.fullName);
     setMsg("");
     try {
-      const res = await auth.valheimThunderstoreInstall(pkg.downloadUrl, pkg.fullName);
-      setMsg(`✅ Đã cài đặt thành công "${pkg.name}" (${res.files.length} files trích xuất).`);
-      void loadMods();
+      const res = await auth.valheimThunderstoreStage({
+        deploymentId: id,
+        packageNamespace: pkg.owner,
+        packageName: pkg.name,
+        version: pkg.versionNumber,
+        packageType,
+        testedGameBuild: build,
+      });
+      setMsg(`✅ Đã stage ${res.packageId}@${res.version}: ${res.fileCount} files, trạng thái ${res.state}. Chưa cài production.`);
     } catch (e: any) {
-      setMsg(`❌ Cài đặt thất bại: ${e.message ?? e}`);
+      setMsg(`❌ Staging thất bại: ${e.message ?? e}`);
     } finally {
       setInstallingPkg(null);
     }
@@ -290,6 +343,24 @@ export default function ValheimMods({
 
       {msg && <p className="config-msg">{msg}</p>}
 
+      <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: "8px", padding: "14px", marginBottom: "16px" }}>
+        <h5 style={{ margin: "0 0 8px", color: "var(--text-heading)" }}>🔒 Approved deployment</h5>
+        <p className="muted" style={{ fontSize: "0.8rem", margin: "0 0 10px" }}>
+          Chỉ nhận Deployment ID đã pin version, validate, qua isolated lab và có manifest <code>lab-tested</code>. Broker sẽ từ chối nếu thiếu bất kỳ gate nào; production deployment vẫn phụ thuộc feature flag riêng.
+        </p>
+        <div className="rcon-input-row" style={{ flexWrap: "wrap" }}>
+          <input className="rcon-input" value={deploymentId} onChange={e => setDeploymentId(e.target.value)} placeholder="Deployment ID (vd: author-mod-1.2.3)" />
+          <input className="sm-input" value={testedGameBuild} onChange={e => setTestedGameBuild(e.target.value)} placeholder="Steam build ID" inputMode="numeric" />
+          <select className="sm-input" value={packageType} onChange={e => setPackageType(e.target.value as "plugin" | "mod")}>
+            <option value="plugin">plugin</option>
+            <option value="mod">mod</option>
+          </select>
+          <Btn variant="ghost" busy={deploymentBusy === "seal"} disabled={deploymentBusy !== null || !deploymentId.trim()} onClick={() => void runDeployment("seal")}>Seal</Btn>
+          <Btn busy={deploymentBusy === "deploy"} disabled={!isServerStopped || deploymentBusy !== null || !deploymentId.trim()} onClick={() => void runDeployment("deploy")}>Deploy</Btn>
+          <Btn variant="danger" busy={deploymentBusy === "rollback"} disabled={!isServerStopped || deploymentBusy !== null || !deploymentId.trim()} onClick={() => void runDeployment("rollback")}>Rollback</Btn>
+        </div>
+      </div>
+
       {subTab === "installed" ? (
         <>
           {/* Upload Box */}
@@ -310,7 +381,7 @@ export default function ValheimMods({
                 id="valheim-mod-upload-input"
                 type="file"
                 accept=".dll,.zip"
-                disabled={!isServerStopped || uploading}
+                disabled={!directMutationEnabled || !isServerStopped || uploading}
                 onChange={(e) => setSelectedFile(e.target.files?.[0] ?? null)}
                 style={{
                   padding: "6px 10px",
@@ -324,7 +395,7 @@ export default function ValheimMods({
               <Btn
                 type="submit"
                 busy={uploading}
-                disabled={!isServerStopped || !selectedFile || uploading}
+                disabled={!directMutationEnabled || !isServerStopped || !selectedFile || uploading}
               >
                 Upload
               </Btn>
@@ -403,7 +474,7 @@ export default function ValheimMods({
                     <div className="action-btns" style={{ display: "flex", gap: "8px", alignItems: "center" }}>
                       <Btn
                         variant={mod.enabled ? "ghost" : "primary"}
-                        disabled={!isServerStopped || isBusy}
+                        disabled={!directMutationEnabled || !isServerStopped || isBusy}
                         busy={busyAction === mod.relativePath}
                         onClick={() => handleToggle(mod)}
                       >
@@ -422,7 +493,7 @@ export default function ValheimMods({
 
                       <Btn
                         variant="danger"
-                        disabled={!isServerStopped || isBusy}
+                        disabled={!directMutationEnabled || !isServerStopped || isBusy}
                         onClick={() => handleDelete(mod)}
                         title="Xóa mod"
                       >
@@ -587,12 +658,12 @@ export default function ValheimMods({
 
                         <Btn
                           variant={isInstalled ? "ghost" : "primary"}
-                          disabled={!isServerStopped || isInstalling || (installingPkg !== null)}
+                          disabled={isInstalling || installingPkg !== null || !deploymentId.trim() || !testedGameBuild.trim()}
                           busy={isInstalling}
-                          onClick={() => handleInstallThunderstore(pkg)}
-                          title={!isServerStopped ? "Cần dừng server để cài đặt" : undefined}
+                          onClick={() => handleStageThunderstore(pkg)}
+                          title="Tải phiên bản được pin vào staging; không thay đổi production"
                         >
-                          {isInstalled ? "Cài lại" : "⚡ 1-Click Install"}
+                          {isInstalled ? "Stage phiên bản này" : "Stage pinned package"}
                         </Btn>
                       </div>
                     </div>
@@ -728,7 +799,7 @@ export default function ValheimMods({
                 Hủy
               </Btn>
               <Btn
-                disabled={!isServerStopped || configModal.saving}
+                disabled={!directMutationEnabled || !isServerStopped || configModal.saving}
                 busy={configModal.saving}
                 onClick={handleSaveConfig}
               >

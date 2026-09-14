@@ -25,11 +25,21 @@ public sealed record ThunderstoreSearchResult(
     IReadOnlyList<ThunderstorePackageSummary> Items
 );
 
+public sealed record ThunderstoreResolvedVersion(
+    string PackageId,
+    string Namespace,
+    string Name,
+    string Version,
+    string DownloadUrl,
+    IReadOnlyList<string> Dependencies
+);
+
 public sealed class ThunderstoreService
 {
     private readonly HttpClient _http;
     private readonly IMemoryCache _cache;
     private const string CacheKey = "Thunderstore_Valheim_Packages";
+    private const string RawCacheKey = "Thunderstore_Valheim_Packages_Raw";
     private static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(30);
 
     public ThunderstoreService(HttpClient http, IMemoryCache cache)
@@ -49,8 +59,7 @@ public sealed class ThunderstoreService
             return cached;
         }
 
-        var rawPackages = await _http.GetFromJsonAsync<List<ThunderstoreRawPackage>>("api/v1/package/", ct)
-            ?? [];
+        var rawPackages = await GetRawPackagesAsync(ct);
 
         var summaries = new List<ThunderstorePackageSummary>(rawPackages.Count);
         foreach (var p in rawPackages)
@@ -75,6 +84,46 @@ public sealed class ThunderstoreService
 
         _cache.Set(CacheKey, (IReadOnlyList<ThunderstorePackageSummary>)summaries, CacheDuration);
         return summaries;
+    }
+
+    public async Task<ThunderstoreResolvedVersion> ResolveVersionAsync(
+        string packageNamespace,
+        string packageName,
+        string version,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(packageNamespace) ||
+            string.IsNullOrWhiteSpace(packageName) ||
+            string.IsNullOrWhiteSpace(version))
+            throw new ArgumentException("Namespace, package name, and exact version are required.");
+
+        var packages = await GetRawPackagesAsync(ct);
+        var package = packages.SingleOrDefault(p =>
+            string.Equals(p.Owner, packageNamespace, StringComparison.Ordinal) &&
+            string.Equals(p.Name, packageName, StringComparison.Ordinal));
+        var selected = package?.Versions?.SingleOrDefault(v =>
+            string.Equals(v.VersionNumber, version, StringComparison.Ordinal));
+
+        if (package is null || selected is null || string.IsNullOrWhiteSpace(selected.DownloadUrl))
+            throw new InvalidOperationException("Exact Thunderstore package version was not found.");
+
+        return new ThunderstoreResolvedVersion(
+            package.FullName,
+            package.Owner,
+            package.Name,
+            selected.VersionNumber,
+            selected.DownloadUrl,
+            selected.Dependencies ?? []);
+    }
+
+    private async Task<IReadOnlyList<ThunderstoreRawPackage>> GetRawPackagesAsync(CancellationToken ct)
+    {
+        if (_cache.TryGetValue(RawCacheKey, out IReadOnlyList<ThunderstoreRawPackage>? cached) && cached is not null)
+            return cached;
+
+        var packages = await _http.GetFromJsonAsync<List<ThunderstoreRawPackage>>("api/v1/package/", ct) ?? [];
+        _cache.Set(RawCacheKey, (IReadOnlyList<ThunderstoreRawPackage>)packages, CacheDuration);
+        return packages;
     }
 
     public async Task<ThunderstoreSearchResult> SearchAsync(
@@ -128,5 +177,6 @@ public sealed class ThunderstoreService
         [JsonPropertyName("downloads")] public int Downloads { get; set; }
         [JsonPropertyName("date_created")] public DateTime DateCreated { get; set; }
         [JsonPropertyName("website_url")] public string WebsiteUrl { get; set; } = "";
+        [JsonPropertyName("dependencies")] public List<string>? Dependencies { get; set; }
     }
 }

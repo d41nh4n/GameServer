@@ -119,6 +119,12 @@ builder.Services.AddScoped<PzOpsService>();
 builder.Services.AddScoped<PzWorldBackupService>();
 builder.Services.AddScoped<ValheimMonitoringService>();
 builder.Services.AddScoped<ValheimModService>();
+builder.Services.AddScoped(_ => new ValheimModStagingService(
+    builder.Configuration["Valheim:ModStagingRoot"] ??
+    "/srv/gamepanel/instances/valheim-main/mods/staging"));
+builder.Services.AddScoped(_ => new ClientModpackService(
+    builder.Configuration["Valheim:ClientModpackRoot"] ??
+    "/srv/gamepanel/instances/valheim-main/mods/client"));
 builder.Services.AddMemoryCache();
 builder.Services.AddHttpClient<ThunderstoreService>();
 builder.Services.AddScoped<AuditLogService>();
@@ -704,30 +710,14 @@ app.MapGet("/api/valheim/mods", (ValheimModService modService) =>
 
 app.MapPost("/api/valheim/mods/toggle", async ([FromBody] ValheimModToggleRequest body, ValheimModService modService, CancellationToken ct) =>
 {
-    try
-    {
-        var mod = await modService.ToggleModAsync(body.RelativePath, ct);
-        return Results.Ok(new { success = true, mod });
-    }
-    catch (InvalidOperationException e) { return Results.Conflict(new { success = false, error = e.Message }); }
-    catch (FileNotFoundException e) { return Results.NotFound(new { success = false, error = e.Message }); }
-    catch (ArgumentException e) { return Results.BadRequest(new { success = false, error = e.Message }); }
-    catch (Exception e) { return Results.Problem(e.Message); }
+    await Task.CompletedTask;
+    return Results.Conflict(new { success = false, error = "Direct production mod mutation is disabled. Use an approved staged deployment." });
 }).RequireAuthorization("admin");
 
 app.MapDelete("/api/valheim/mods", async (string? path, [FromBody(EmptyBodyBehavior = Microsoft.AspNetCore.Mvc.ModelBinding.EmptyBodyBehavior.Allow)] ValheimModDeleteRequest? body, ValheimModService modService, CancellationToken ct) =>
 {
-    var targetPath = !string.IsNullOrWhiteSpace(path) ? path : body?.RelativePath;
-    if (string.IsNullOrWhiteSpace(targetPath)) return Results.BadRequest(new { success = false, error = "Path is required." });
-    try
-    {
-        await modService.DeleteModAsync(targetPath, ct);
-        return Results.Ok(new { success = true });
-    }
-    catch (InvalidOperationException e) { return Results.Conflict(new { success = false, error = e.Message }); }
-    catch (FileNotFoundException e) { return Results.NotFound(new { success = false, error = e.Message }); }
-    catch (ArgumentException e) { return Results.BadRequest(new { success = false, error = e.Message }); }
-    catch (Exception e) { return Results.Problem(e.Message); }
+    await Task.CompletedTask;
+    return Results.Conflict(new { success = false, error = "Direct production mod mutation is disabled. Use an approved staged deployment." });
 }).RequireAuthorization("admin");
 
 app.MapGet("/api/valheim/mods/config", async (string name, ValheimModService modService, CancellationToken ct) =>
@@ -744,29 +734,14 @@ app.MapGet("/api/valheim/mods/config", async (string name, ValheimModService mod
 
 app.MapPut("/api/valheim/mods/config", async ([FromBody] ValheimModConfigSaveRequest body, ValheimModService modService, CancellationToken ct) =>
 {
-    try
-    {
-        await modService.SaveConfigAsync(body.Name, body.Content, ct);
-        return Results.Ok(new { success = true });
-    }
-    catch (InvalidOperationException e) { return Results.Conflict(new { success = false, error = e.Message }); }
-    catch (ArgumentException e) { return Results.BadRequest(new { success = false, error = e.Message }); }
-    catch (Exception e) { return Results.Problem(e.Message); }
+    await Task.CompletedTask;
+    return Results.Conflict(new { success = false, error = "Direct production config mutation is disabled. Use an approved staged deployment." });
 }).RequireAuthorization("admin");
 
 app.MapPost("/api/valheim/mods/upload", async (IFormFile file, ValheimModService modService, CancellationToken ct) =>
 {
-    if (file == null || file.Length == 0) return Results.BadRequest(new { success = false, error = "File is required." });
-    if (file.Length > 50 * 1024 * 1024) return Results.BadRequest(new { success = false, error = "File size exceeds 50MB limit." });
-    try
-    {
-        using var stream = file.OpenReadStream();
-        var files = await modService.UploadModAsync(file.FileName, stream, ct);
-        return Results.Ok(new { success = true, files });
-    }
-    catch (InvalidOperationException e) { return Results.Conflict(new { success = false, error = e.Message }); }
-    catch (ArgumentException e) { return Results.BadRequest(new { success = false, error = e.Message }); }
-    catch (Exception e) { return Results.Problem(e.Message); }
+    await Task.CompletedTask;
+    return Results.Conflict(new { success = false, error = "Direct production upload is disabled. Validate and stage the package first." });
 }).RequireAuthorization("admin");
 
 app.MapGet("/api/valheim/mods/thunderstore/search", async (string? q, int? page, int? pageSize, ThunderstoreService thunderstore, CancellationToken ct) =>
@@ -779,19 +754,122 @@ app.MapGet("/api/valheim/mods/thunderstore/search", async (string? q, int? page,
     catch (Exception e) { return Results.Problem(e.Message); }
 }).RequireAuthorization("authenticated");
 
-app.MapPost("/api/valheim/mods/thunderstore/install", async ([FromBody] ValheimThunderstoreInstallRequest body, ValheimModService modService, IHttpClientFactory httpFactory, CancellationToken ct) =>
+app.MapPost("/api/valheim/mods/thunderstore/stage", async (
+    [FromBody] ValheimThunderstoreStageRequest body,
+    ThunderstoreService thunderstore,
+    ValheimModStagingService staging,
+    IHttpClientFactory httpFactory,
+    AuditLogService audit,
+    HttpContext http,
+    CancellationToken ct) =>
 {
-    if (string.IsNullOrWhiteSpace(body.DownloadUrl)) return Results.BadRequest(new { success = false, error = "DownloadUrl is required." });
+    if (body is null ||
+        string.IsNullOrWhiteSpace(body.DeploymentId) ||
+        !System.Text.RegularExpressions.Regex.IsMatch(body.DeploymentId, "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$") ||
+        string.IsNullOrWhiteSpace(body.PackageNamespace) ||
+        string.IsNullOrWhiteSpace(body.PackageName) ||
+        string.IsNullOrWhiteSpace(body.Version) ||
+        body.PackageType is not ("plugin" or "mod") ||
+        !System.Text.RegularExpressions.Regex.IsMatch(body.TestedGameBuild ?? "", "^[0-9]{1,20}$"))
+        return Results.BadRequest(new { success = false, error = "Invalid pinned staging request." });
+
     try
     {
+        var package = await thunderstore.ResolveVersionAsync(
+            body.PackageNamespace,
+            body.PackageName,
+            body.Version,
+            ct);
+        if (!Uri.TryCreate(package.DownloadUrl, UriKind.Absolute, out var uri) ||
+            uri.Scheme != Uri.UriSchemeHttps ||
+            !(uri.Host.Equals("thunderstore.io", StringComparison.OrdinalIgnoreCase) ||
+              uri.Host.EndsWith(".thunderstore.io", StringComparison.OrdinalIgnoreCase)))
+            return Results.BadRequest(new { success = false, error = "Thunderstore returned an untrusted download URL." });
+
         var client = httpFactory.CreateClient();
         client.Timeout = TimeSpan.FromMinutes(2);
-        var files = await modService.InstallThunderstoreModAsync(body.DownloadUrl, body.PackageFullName, client, ct);
-        return Results.Ok(new { success = true, files });
+        using var response = await client.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, ct);
+        response.EnsureSuccessStatusCode();
+        if (response.Content.Headers.ContentLength is > 104857600)
+            return Results.BadRequest(new { success = false, error = "Package exceeds 100MB size limit." });
+        await using var stream = await response.Content.ReadAsStreamAsync(ct);
+        var result = await staging.StageAsync(
+            body.DeploymentId,
+            package,
+            body.PackageType,
+            body.TestedGameBuild!,
+            stream,
+            ct);
+        await audit.RecordAsync(
+            http.User,
+            "VALHEIM_MOD_STAGE",
+            Guid.Parse("11111111-1111-1111-1111-111111111111"),
+            true,
+            "VALIDATED",
+            new { deploymentId = result.DeploymentId, packageId = result.PackageId, version = result.Version, fileCount = result.FileCount });
+        return Results.Accepted(
+            $"/api/valheim/mod-deployments/{result.DeploymentId}/seal",
+            new { success = true, result.DeploymentId, result.State, result.PackageId, result.Version, result.ArchiveSha256, result.FileCount });
     }
-    catch (InvalidOperationException e) { return Results.Conflict(new { success = false, error = e.Message }); }
     catch (ArgumentException e) { return Results.BadRequest(new { success = false, error = e.Message }); }
-    catch (Exception e) { return Results.Problem(e.Message); }
+    catch (InvalidDataException e) { return Results.BadRequest(new { success = false, error = e.Message }); }
+    catch (InvalidOperationException e) { return Results.Conflict(new { success = false, error = e.Message }); }
+    catch (HttpRequestException) { return Results.Problem("Thunderstore package download failed.", statusCode: StatusCodes.Status502BadGateway); }
+}).RequireAuthorization("admin");
+
+app.MapPost("/api/valheim/mods/thunderstore/install", async ([FromBody] ValheimThunderstoreInstallRequest body, ValheimModService modService, IHttpClientFactory httpFactory, CancellationToken ct) =>
+{
+    await Task.CompletedTask;
+    return Results.Conflict(new { success = false, error = "Direct production install is disabled. Use an approved staged and lab-tested pinned package before deployment." });
+}).RequireAuthorization("admin");
+
+app.MapPost("/api/valheim/mod-deployments/{deploymentId}/{action}", async (
+    string deploymentId,
+    string action,
+    PrivilegedBrokerClient broker,
+    AuditLogService audit,
+    HttpContext http,
+    CancellationToken ct) =>
+{
+    if (action is not ("seal" or "deploy" or "rollback"))
+        return Results.BadRequest(new { success = false, error = "Unsupported deployment action." });
+
+    try
+    {
+        var brokerResult = await broker.SendDeploymentAsync(action, deploymentId, ct);
+        var state = brokerResult.TryGetProperty("state", out var stateValue)
+            ? stateValue.GetString() ?? action
+            : action;
+        await audit.RecordAsync(
+            http.User,
+            $"VALHEIM_MOD_{action.ToUpperInvariant()}",
+            Guid.Parse("11111111-1111-1111-1111-111111111111"),
+            true,
+            state.ToUpperInvariant(),
+            new { deploymentId });
+        return Results.Ok(new { success = true, deploymentId, state });
+    }
+    catch (ArgumentException e)
+    {
+        return Results.BadRequest(new { success = false, error = e.Message });
+    }
+    catch (InvalidOperationException e)
+    {
+        await audit.RecordAsync(
+            http.User,
+            $"VALHEIM_MOD_{action.ToUpperInvariant()}",
+            Guid.Parse("11111111-1111-1111-1111-111111111111"),
+            false,
+            "REJECTED",
+            new { deploymentId });
+        return Results.Conflict(new { success = false, error = e.Message });
+    }
+    catch (IOException)
+    {
+        return Results.Problem(
+            "Privileged deployment broker is unavailable.",
+            statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
 }).RequireAuthorization("admin");
 
 app.MapGet("/api/valheim/mods/export-modpack", (ValheimModService modService) =>
@@ -823,6 +901,29 @@ app.MapGet("/api/resources/overview", async (ResourceMetricsService resources, C
 {
     try { return Results.Ok(await resources.GetOverviewAsync(ct)); }
     catch (Exception e) { return Results.Problem(e.Message); }
+}).RequireAuthorization("authenticated");
+
+app.MapGet("/api/client-updater/manifest", async (ClientModpackService modpack, CancellationToken ct) =>
+{
+    try { return Results.Ok(await modpack.GetManifestAsync(ct)); }
+    catch (FileNotFoundException) { return Results.NotFound(new { error = "No approved client modpack is published." }); }
+    catch (InvalidDataException) { return Results.Problem("The published client modpack failed validation.", statusCode: StatusCodes.Status503ServiceUnavailable); }
+}).RequireAuthorization("authenticated");
+
+app.MapGet("/api/client-updater/packages/{packageId}/{version}", async (
+    string packageId,
+    string version,
+    ClientModpackService modpack,
+    CancellationToken ct) =>
+{
+    try
+    {
+        var package = await modpack.GetPackageAsync(packageId, version, ct);
+        return Results.File(package.Bytes, "application/zip", package.DownloadName);
+    }
+    catch (ArgumentException e) { return Results.BadRequest(new { error = e.Message }); }
+    catch (FileNotFoundException) { return Results.NotFound(new { error = "Approved client package was not found." }); }
+    catch (InvalidDataException) { return Results.Problem("The approved client package failed validation.", statusCode: StatusCodes.Status503ServiceUnavailable); }
 }).RequireAuthorization("authenticated");
 
 app.MapGet("/api/observability/metrics", async (MetricObservabilityService metrics, CancellationToken ct) => Results.Ok(await metrics.GetStatusAsync(ct)))

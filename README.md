@@ -14,6 +14,11 @@ Control panel for adopted **Valheim** and **Project Zomboid** services, built wi
 
 Detailed source/feature documentation: [`docs/SOURCE_KNOWLEDGE_BASE.md`](docs/SOURCE_KNOWLEDGE_BASE.md).
 
+## Client updater
+
+`client/GamePanel.ClientUpdater` is a portable self-contained Windows updater for approved, pinned client modpacks. It authenticates to the panel, verifies archive/file SHA-256 values, writes only allowlisted BepInEx/Doorstop paths, and backs up every overwritten client file. Build/use instructions: [`client/README.md`](client/README.md). A client updater cannot download a mod until the server publishes a lab-tested client manifest.
+
+
 ## Ports
 
 - API: `http://localhost:5000` or `http://100.82.102.38:5000`

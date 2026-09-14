@@ -31,7 +31,7 @@ ASP.NET Core API :5000
         ├── AuditLogs
         └── SystemEvents
 
-Raw logs remain in systemd journal/filesystem; SQLite stores audit and lifecycle facts only.
+Raw logs remain in systemd journal/filesystem; SQLite stores audit and lifecycle facts only. The optional Windows Client Updater authenticates to the API, reads an approved client-modpack manifest, verifies pinned archive/file hashes, then installs only allowlisted BepInEx/Doorstop paths with rollback backups. It never follows a moving `latest` package.
 ```
 
 ## 3. Backend source map
@@ -117,6 +117,7 @@ Never store raw journal lines, passwords, JWTs, RCON passwords or full config te
 - Lifecycle: `GET /api/servers`, `POST /api/servers/{id}/start|stop|restart`, `GET /api/operations/{id}`
 - PZ: `/api/pz/rcon/*`, `/api/pz/config*`, `/api/pz/sandbox/*`, `/api/pz/mods`, `/api/pz/logs/*`, `/api/pz/ops/health`, `/api/pz/backups*`
 - Valheim: `/api/valheim/monitor`, `/api/valheim/logs`, `/api/valheim/members`, `/api/valheim/backups*`
+- Client updater: `GET /api/client-updater/manifest`, `GET /api/client-updater/packages/{packageId}/{version}`
 - Observability: `/api/audit`, `/api/events`, `/api/resources/overview`
 
 Admin authorization is required for mutations. Authenticated users can read status, logs and resource data.

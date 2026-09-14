@@ -236,6 +236,53 @@ public class IntegrationAuthTests : IDisposable
     }
 
     [Fact]
+    public async Task ClientUpdaterEndpoints_RequireAuthentication()
+    {
+        var (manifestStatus, _) = await Send("GET", "/api/client-updater/manifest", null, null, null);
+        var (packageStatus, _) = await Send("GET", "/api/client-updater/packages/Advize-PlantEverything/1.21.2", null, null, null);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, manifestStatus);
+        Assert.Equal(HttpStatusCode.Unauthorized, packageStatus);
+    }
+
+    [Fact]
+    public async Task ThunderstoreStage_RequiresAdminAndRejectsInvalidInputBeforeDownload()
+    {
+        const string body = "{\"deploymentId\":\"bad!\",\"packageNamespace\":\"Author\",\"packageName\":\"TestMod\",\"version\":\"1.2.3\",\"packageType\":\"plugin\",\"testedGameBuild\":\"25253791\"}";
+        var user = SignToken(UserRole.User);
+        var (userStatus, _) = await Send("POST", "/api/valheim/mods/thunderstore/stage", body, user, null);
+        Assert.Equal(HttpStatusCode.Forbidden, userStatus);
+
+        var admin = await LoginAdmin();
+        var (adminStatus, _) = await Send("POST", "/api/valheim/mods/thunderstore/stage", body, admin, null);
+        Assert.Equal(HttpStatusCode.BadRequest, adminStatus);
+    }
+
+    [Fact]
+    public async Task DirectThunderstoreInstall_IsFailClosedWithoutApprovedDeployment()
+    {
+        var admin = await LoginAdmin();
+        var body = "{\"downloadUrl\":\"https://valheim.thunderstore.io/package/download/author/mod/1.0.0/\",\"packageFullName\":\"author-mod\"}";
+
+        var (status, response) = await Send("POST", "/api/valheim/mods/thunderstore/install", body, admin, null);
+
+        Assert.Equal(HttpStatusCode.Conflict, status);
+        Assert.Contains("staged", Str(response), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task DeploymentRoute_RequiresAdminAndRejectsInvalidIdBeforeBrokerCall()
+    {
+        var user = SignToken(UserRole.User);
+        var (forbidden, _) = await Send("POST", "/api/valheim/mod-deployments/dep-001/seal", null, user, null);
+        Assert.Equal(HttpStatusCode.Forbidden, forbidden);
+
+        var admin = await LoginAdmin();
+        var (invalid, _) = await Send("POST", "/api/valheim/mod-deployments/bad!/seal", null, admin, null);
+        Assert.Equal(HttpStatusCode.BadRequest, invalid);
+    }
+
+    [Fact]
     public async Task Anon_HubNegotiate_Returns401()
     {
         var (status, _) = await Send("POST", "/hubs/server/negotiate?negotiateVersion=1", null, null, null);

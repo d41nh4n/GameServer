@@ -16,3 +16,10 @@ public sealed record ValheimModToggleRequest(string RelativePath);
 public sealed record ValheimModDeleteRequest(string RelativePath);
 public sealed record ValheimModConfigSaveRequest(string Name, string Content);
 public sealed record ValheimThunderstoreInstallRequest(string DownloadUrl, string PackageFullName);
+public sealed record ValheimThunderstoreStageRequest(
+    string DeploymentId,
+    string PackageNamespace,
+    string PackageName,
+    string Version,
+    string PackageType,
+    string TestedGameBuild);
