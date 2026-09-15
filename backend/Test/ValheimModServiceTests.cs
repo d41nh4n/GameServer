@@ -36,11 +36,11 @@ public sealed class ValheimModServiceTests : IDisposable
         public Task<SystemdUnitState> GetStateAsync(string unitName, CancellationToken ct = default)
         {
             return Task.FromResult(new SystemdUnitState(
-                Exists: true,
-                ActiveState: IsRunning ? "active" : "inactive",
-                SubState: IsRunning ? "running" : "dead",
-                MainPid: IsRunning ? 1234 : null,
-                InvocationId: "inv-1"
+                true,
+                IsRunning ? "active" : "inactive",
+                IsRunning ? "running" : "dead",
+                IsRunning ? 1234 : 0,
+                "inv-1"
             ));
         }
 
