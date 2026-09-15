@@ -77,7 +77,18 @@ public sealed class SystemdRuntimeDriver : ISystemdRuntimeDriver
             {
                 var brokerResponse = await _broker.SendAsync(unitName, "status", ct);
                 var brokerState = brokerResponse.GetProperty("status");
-                var brokerValues = brokerState.EnumerateObject().Where(x => x.Value.ValueKind is JsonValueKind.String or JsonValueKind.Number or JsonValueKind.True or JsonValueKind.False).ToDictionary(x => x.Name, x => x.Value.ToString(), StringComparer.Ordinal);
+                var brokerValues = brokerState.EnumerateObject()
+                    .Where(x => x.Value.ValueKind is
+                        JsonValueKind.String or
+                        JsonValueKind.Number or
+                        JsonValueKind.True or
+                        JsonValueKind.False)
+                    .ToDictionary(
+                        x => x.Name,
+                        x => x.Value.ValueKind == JsonValueKind.String
+                            ? (x.Value.GetString() ?? "")
+                            : x.Value.ToString(),
+                        StringComparer.Ordinal);
                 return new(true, Value(brokerValues, "ActiveState"), Value(brokerValues, "SubState"), ParsePositiveInt(Value(brokerValues, "MainPID")), Value(brokerValues, "InvocationID"));
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
