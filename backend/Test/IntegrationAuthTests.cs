@@ -236,6 +236,16 @@ public class IntegrationAuthTests : IDisposable
     }
 
     [Fact]
+    public async Task ClientUpdaterEndpoints_RequireAuthentication()
+    {
+        var (manifestStatus, _) = await Send("GET", "/api/client-updater/manifest", null, null, null);
+        var (packageStatus, _) = await Send("GET", "/api/client-updater/packages/Advize-PlantEverything/1.21.2", null, null, null);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, manifestStatus);
+        Assert.Equal(HttpStatusCode.Unauthorized, packageStatus);
+    }
+
+    [Fact]
     public async Task Anon_HubNegotiate_Returns401()
     {
         var (status, _) = await Send("POST", "/hubs/server/negotiate?negotiateVersion=1", null, null, null);

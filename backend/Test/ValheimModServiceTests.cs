@@ -36,11 +36,11 @@ public sealed class ValheimModServiceTests : IDisposable
         public Task<SystemdUnitState> GetStateAsync(string unitName, CancellationToken ct = default)
         {
             return Task.FromResult(new SystemdUnitState(
-                Exists: true,
-                ActiveState: IsRunning ? "active" : "inactive",
-                SubState: IsRunning ? "running" : "dead",
-                MainPid: IsRunning ? 1234 : null,
-                InvocationId: "inv-1"
+                true,
+                IsRunning ? "active" : "inactive",
+                IsRunning ? "running" : "dead",
+                IsRunning ? 1234 : 0,
+                "inv-1"
             ));
         }
 
@@ -218,6 +218,79 @@ public sealed class ValheimModServiceTests : IDisposable
 
         Assert.Contains("TestTs/TestTs.dll", files);
         Assert.True(File.Exists(Path.Combine(_pluginsDir, "TestTs", "TestTs.dll")));
+    }
+
+    [Fact]
+    public async Task InstallThunderstoreMod_NormalizesWindowsArchiveSeparators()
+    {
+        using var zipStream = new MemoryStream();
+        using (var archive = new ZipArchive(zipStream, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            var entry = archive.CreateEntry("plugins\\AutoRepair.dll");
+            await using var entryStream = entry.Open();
+            await entryStream.WriteAsync("auto repair"u8.ToArray());
+        }
+        zipStream.Position = 0;
+
+        var handler = new MockHttpMessageHandler(zipStream.ToArray());
+        using var client = new HttpClient(handler);
+        var service = new ValheimModService(_driver, _tempDir);
+
+        var files = await service.InstallThunderstoreModAsync(
+            "https://valheim.thunderstore.io/package/download/Tekla/AutoRepair/5.4.1602/",
+            "Tekla-AutoRepair",
+            client);
+
+        Assert.Contains("AutoRepair.dll", files);
+        Assert.True(File.Exists(Path.Combine(_pluginsDir, "AutoRepair.dll")));
+        Assert.False(File.Exists(Path.Combine(_pluginsDir, "Tekla-AutoRepair", "plugins\\AutoRepair.dll")));
+    }
+
+    [Fact]
+    public async Task InstallThunderstoreMod_RejectsPathsThatCollideAfterNormalization()
+    {
+        using var zipStream = new MemoryStream();
+        using (var archive = new ZipArchive(zipStream, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            await using (var first = archive.CreateEntry("plugins\\Duplicate.dll").Open())
+                await first.WriteAsync("first"u8.ToArray());
+            await using (var second = archive.CreateEntry("plugins/Duplicate.dll").Open())
+                await second.WriteAsync("second"u8.ToArray());
+        }
+        zipStream.Position = 0;
+
+        var handler = new MockHttpMessageHandler(zipStream.ToArray());
+        using var client = new HttpClient(handler);
+        var service = new ValheimModService(_driver, _tempDir);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.InstallThunderstoreModAsync(
+            "https://valheim.thunderstore.io/package/download/Author/Duplicate/1.0.0/",
+            "Author-Duplicate",
+            client));
+        Assert.False(File.Exists(Path.Combine(_pluginsDir, "Duplicate.dll")));
+    }
+
+    [Fact]
+    public async Task InstallThunderstoreMod_RejectsBackslashTraversalBeforeExtraction()
+    {
+        using var zipStream = new MemoryStream();
+        using (var archive = new ZipArchive(zipStream, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            var entry = archive.CreateEntry("plugins\\..\\..\\escape.dll");
+            await using var entryStream = entry.Open();
+            await entryStream.WriteAsync("escape"u8.ToArray());
+        }
+        zipStream.Position = 0;
+
+        var handler = new MockHttpMessageHandler(zipStream.ToArray());
+        using var client = new HttpClient(handler);
+        var service = new ValheimModService(_driver, _tempDir);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.InstallThunderstoreModAsync(
+            "https://valheim.thunderstore.io/package/download/Author/Escape/1.0.0/",
+            "Author-Escape",
+            client));
+        Assert.False(File.Exists(Path.Combine(_tempDir, "escape.dll")));
     }
 
     private sealed class MockHttpMessageHandler(byte[] responseBytes) : HttpMessageHandler

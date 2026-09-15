@@ -119,6 +119,9 @@ builder.Services.AddScoped<PzOpsService>();
 builder.Services.AddScoped<PzWorldBackupService>();
 builder.Services.AddScoped<ValheimMonitoringService>();
 builder.Services.AddScoped<ValheimModService>();
+builder.Services.AddScoped(_ => new ClientModpackService(
+    builder.Configuration["Valheim:ClientModpackRoot"] ??
+    "/srv/gamepanel/instances/valheim-main/mods/client"));
 builder.Services.AddMemoryCache();
 builder.Services.AddHttpClient<ThunderstoreService>();
 builder.Services.AddScoped<AuditLogService>();
@@ -823,6 +826,29 @@ app.MapGet("/api/resources/overview", async (ResourceMetricsService resources, C
 {
     try { return Results.Ok(await resources.GetOverviewAsync(ct)); }
     catch (Exception e) { return Results.Problem(e.Message); }
+}).RequireAuthorization("authenticated");
+
+app.MapGet("/api/client-updater/manifest", async (ClientModpackService modpack, CancellationToken ct) =>
+{
+    try { return Results.Ok(await modpack.GetManifestAsync(ct)); }
+    catch (FileNotFoundException) { return Results.NotFound(new { error = "No approved client modpack is published." }); }
+    catch (InvalidDataException) { return Results.Problem("The published client modpack failed validation.", statusCode: StatusCodes.Status503ServiceUnavailable); }
+}).RequireAuthorization("authenticated");
+
+app.MapGet("/api/client-updater/packages/{packageId}/{version}", async (
+    string packageId,
+    string version,
+    ClientModpackService modpack,
+    CancellationToken ct) =>
+{
+    try
+    {
+        var package = await modpack.GetPackageAsync(packageId, version, ct);
+        return Results.File(package.Bytes, "application/zip", package.DownloadName);
+    }
+    catch (ArgumentException e) { return Results.BadRequest(new { error = e.Message }); }
+    catch (FileNotFoundException) { return Results.NotFound(new { error = "Approved client package was not found." }); }
+    catch (InvalidDataException) { return Results.Problem("The approved client package failed validation.", statusCode: StatusCodes.Status503ServiceUnavailable); }
 }).RequireAuthorization("authenticated");
 
 app.MapGet("/api/observability/metrics", async (MetricObservabilityService metrics, CancellationToken ct) => Results.Ok(await metrics.GetStatusAsync(ct)))
