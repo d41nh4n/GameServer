@@ -18,6 +18,8 @@ export default function ValheimMods({
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [checkingUpdates, setCheckingUpdates] = useState(false);
+  const [updatingMod, setUpdatingMod] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
   // Thunderstore state
@@ -49,6 +51,46 @@ export default function ValheimMods({
       setLoading(false);
     }
   }, [auth]);
+
+  const handleCheckUpdates = useCallback(async () => {
+    setCheckingUpdates(true);
+    setMsg("");
+    try {
+      const res = await auth.valheimModCheckUpdates();
+      startTransition(() => {
+        setMods(res.mods || []);
+      });
+      const updateCount = (res.mods || []).filter((m) => m.hasUpdate).length;
+      if (updateCount > 0) {
+        setMsg(`⚡ Phát hiện ${updateCount} mod có bản cập nhật mới trên Thunderstore!`);
+      } else {
+        setMsg("✅ Tất cả các mod đều đang ở phiên bản mới nhất.");
+      }
+    } catch (e: any) {
+      setMsg(`❌ Không thể kiểm tra cập nhật: ${e.message ?? e}`);
+    } finally {
+      setCheckingUpdates(false);
+    }
+  }, [auth]);
+
+  const handleUpdateMod = async (mod: ValheimMod) => {
+    if (!isServerStopped) {
+      setMsg("❌ Server must be stopped before updating mods.");
+      return;
+    }
+    const pkgName = mod.packageFullName || mod.name;
+    setUpdatingMod(pkgName);
+    setMsg("");
+    try {
+      await auth.valheimModUpdate(pkgName, mod.updateDownloadUrl ?? undefined);
+      setMsg(`✅ Cập nhật thành công "${mod.name}" lên phiên bản v${mod.latestVersion || "mới nhất"}.`);
+      await handleCheckUpdates();
+    } catch (e: any) {
+      setMsg(`❌ Cập nhật thất bại: ${e.message ?? e}`);
+    } finally {
+      setUpdatingMod(null);
+    }
+  };
 
   useEffect(() => {
     void loadMods();
@@ -334,14 +376,24 @@ export default function ValheimMods({
             </form>
           </div>
 
-          {/* Search and summary */}
-          <div className="log-controls" style={{ marginBottom: "12px" }}>
+          {/* Search, summary and Check Updates */}
+          <div className="log-controls" style={{ marginBottom: "12px", display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap" }}>
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Lọc mod theo tên..."
               className="log-filter-input"
+              style={{ flex: 1, minWidth: "180px" }}
             />
+            <Btn
+              variant="ghost"
+              busy={checkingUpdates}
+              disabled={checkingUpdates}
+              onClick={() => void handleCheckUpdates()}
+              title="Kiểm tra phiên bản mới từ Thunderstore"
+            >
+              🔍 Kiểm tra cập nhật
+            </Btn>
             <span className="muted" style={{ fontSize: "0.82rem" }}>
               Hiển thị {filteredMods.length} / {mods.length} mod
             </span>
@@ -391,16 +443,64 @@ export default function ValheimMods({
                         {mod.enabled ? "ACTIVE" : "DISABLED"}
                       </span>
                       <div>
-                        <div style={{ fontWeight: 600, color: "var(--text-heading)", fontSize: "0.88rem" }}>
-                          {mod.name}
+                        <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                          <span style={{ fontWeight: 600, color: "var(--text-heading)", fontSize: "0.88rem" }}>
+                            {mod.name}
+                          </span>
+                          {mod.installedVersion && (
+                            <span
+                              style={{
+                                fontSize: "0.72rem",
+                                padding: "1px 6px",
+                                borderRadius: "4px",
+                                background: "rgba(56, 139, 253, 0.15)",
+                                color: "#58a6ff",
+                                border: "1px solid rgba(56, 139, 253, 0.3)",
+                                fontFamily: "monospace",
+                              }}
+                            >
+                              v{mod.installedVersion}
+                            </span>
+                          )}
+                          {mod.hasUpdate && (
+                            <span
+                              style={{
+                                fontSize: "0.72rem",
+                                padding: "1px 6px",
+                                borderRadius: "4px",
+                                background: "rgba(210, 153, 34, 0.2)",
+                                color: "#e3b341",
+                                border: "1px solid rgba(210, 153, 34, 0.4)",
+                                fontWeight: 600,
+                              }}
+                            >
+                              ⚡ Có bản v{mod.latestVersion}
+                            </span>
+                          )}
                         </div>
-                        <div className="muted" style={{ fontSize: "0.78rem", fontFamily: "monospace" }}>
+                        <div className="muted" style={{ fontSize: "0.78rem", fontFamily: "monospace", marginTop: "2px" }}>
                           {mod.relativePath} · {formatSize(mod.sizeBytes)} · {new Date(mod.lastModifiedUtc).toLocaleDateString()}
                         </div>
                       </div>
                     </div>
 
                     <div className="action-btns" style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                      {mod.hasUpdate && (
+                        <Btn
+                          variant="primary"
+                          disabled={!isServerStopped || isBusy || updatingMod !== null}
+                          busy={updatingMod === (mod.packageFullName || mod.name)}
+                          onClick={() => void handleUpdateMod(mod)}
+                          title={`Cập nhật lên phiên bản v${mod.latestVersion}`}
+                          style={{
+                            background: "linear-gradient(180deg, #238636 0%, #2ea043 100%)",
+                            borderColor: "rgba(240, 246, 252, 0.1)",
+                          }}
+                        >
+                          🔄 Cập nhật
+                        </Btn>
+                      )}
+
                       <Btn
                         variant={mod.enabled ? "ghost" : "primary"}
                         disabled={!isServerStopped || isBusy}

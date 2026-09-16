@@ -788,8 +788,46 @@ app.MapPost("/api/valheim/mods/thunderstore/install", async ([FromBody] ValheimT
     try
     {
         var client = httpFactory.CreateClient();
-        client.Timeout = TimeSpan.FromMinutes(2);
+        client.Timeout = TimeSpan.FromMinutes(5);
+        client.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36");
         var files = await modService.InstallThunderstoreModAsync(body.DownloadUrl, body.PackageFullName, client, ct);
+        return Results.Ok(new { success = true, files });
+    }
+    catch (InvalidOperationException e) { return Results.Conflict(new { success = false, error = e.Message }); }
+    catch (ArgumentException e) { return Results.BadRequest(new { success = false, error = e.Message }); }
+    catch (Exception e) { return Results.Problem(e.Message); }
+}).RequireAuthorization("admin");
+
+app.MapGet("/api/valheim/mods/check-updates", async (ValheimModService modService, ThunderstoreService thunderstore, CancellationToken ct) =>
+{
+    try
+    {
+        var packages = await thunderstore.GetPackagesAsync(ct);
+        var mods = modService.CheckModUpdates(packages);
+        return Results.Ok(new { success = true, mods });
+    }
+    catch (Exception e) { return Results.Problem(e.Message); }
+}).RequireAuthorization("authenticated");
+
+app.MapPost("/api/valheim/mods/thunderstore/update", async ([FromBody] ValheimThunderstoreUpdateRequest body, ValheimModService modService, ThunderstoreService thunderstore, IHttpClientFactory httpFactory, CancellationToken ct) =>
+{
+    if (string.IsNullOrWhiteSpace(body.PackageFullName)) return Results.BadRequest(new { success = false, error = "PackageFullName is required." });
+    try
+    {
+        var downloadUrl = body.DownloadUrl;
+        if (string.IsNullOrWhiteSpace(downloadUrl))
+        {
+            var packages = await thunderstore.GetPackagesAsync(ct);
+            var pkg = packages.FirstOrDefault(p => p.FullName.Equals(body.PackageFullName, StringComparison.OrdinalIgnoreCase));
+            if (pkg is null)
+                return Results.NotFound(new { success = false, error = $"Package '{body.PackageFullName}' not found on Thunderstore." });
+            downloadUrl = pkg.DownloadUrl;
+        }
+
+        var client = httpFactory.CreateClient();
+        client.Timeout = TimeSpan.FromMinutes(5);
+        client.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36");
+        var files = await modService.InstallThunderstoreModAsync(downloadUrl, body.PackageFullName, client, ct);
         return Results.Ok(new { success = true, files });
     }
     catch (InvalidOperationException e) { return Results.Conflict(new { success = false, error = e.Message }); }
