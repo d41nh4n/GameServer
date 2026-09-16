@@ -293,7 +293,108 @@ public sealed class ValheimModServiceTests : IDisposable
         Assert.False(File.Exists(Path.Combine(_tempDir, "escape.dll")));
     }
 
-    private sealed class MockHttpMessageHandler(byte[] responseBytes) : HttpMessageHandler
+    [Fact]
+    public async Task InstallThunderstoreMod_RejectsPackagesExceeding300MbLimit()
+    {
+        var handler = new MockHttpMessageHandler([], contentLengthOverride: 301L * 1024 * 1024);
+        using var client = new HttpClient(handler);
+        var service = new ValheimModService(_driver, _tempDir);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => service.InstallThunderstoreModAsync(
+            "https://valheim.thunderstore.io/package/download/Author/HugeMod/1.0.0/",
+            "Author-HugeMod",
+            client));
+        Assert.Equal("Mod package exceeds 300MB size limit.", ex.Message);
+    }
+
+    [Theory]
+    [InlineData("1.9.1", "1.7.5", true)]
+    [InlineData("2.0.0", "1.9.9", true)]
+    [InlineData("1.10.0", "1.9.0", true)]
+    [InlineData("1.0.0", "1.0.0", false)]
+    [InlineData("1.0.0", "1.0.1", false)]
+    [InlineData("v1.2.0", "1.2.0", false)]
+    [InlineData("1.2.0", null, false)]
+    public void IsNewerVersion_CorrectlyComparesVersions(string latest, string? current, bool expected)
+    {
+        var actual = ValheimModService.IsNewerVersion(latest, current);
+        Assert.Equal(expected, actual);
+    }
+
+    [Fact]
+    public async Task InstallThunderstoreMod_PreservesExistingConfigAndSavesMetadata()
+    {
+        var configDir = Path.Combine(_tempDir, "config");
+        Directory.CreateDirectory(configDir);
+        var existingConfigPath = Path.Combine(configDir, "TestMod.cfg");
+        await File.WriteAllTextAsync(existingConfigPath, "UserCustomSetting=True");
+
+        using var zipStream = new MemoryStream();
+        using (var archive = new ZipArchive(zipStream, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            var manifestEntry = archive.CreateEntry("manifest.json");
+            await using (var entryStream = manifestEntry.Open())
+            {
+                await entryStream.WriteAsync(System.Text.Encoding.UTF8.GetBytes(
+                    """{"name":"TestMod","version_number":"1.2.0","description":"test"}"""
+                ));
+            }
+
+            var dllEntry = archive.CreateEntry("TestMod.dll");
+            await using (var entryStream = dllEntry.Open())
+            {
+                await entryStream.WriteAsync("dllcontent"u8.ToArray());
+            }
+
+            var cfgEntry = archive.CreateEntry("TestMod.cfg");
+            await using (var entryStream = cfgEntry.Open())
+            {
+                await entryStream.WriteAsync("DefaultSetting=False"u8.ToArray());
+            }
+        }
+        zipStream.Position = 0;
+
+        var handler = new MockHttpMessageHandler(zipStream.ToArray());
+        using var client = new HttpClient(handler);
+        var service = new ValheimModService(_driver, _tempDir);
+
+        var files = await service.InstallThunderstoreModAsync(
+            "https://valheim.thunderstore.io/package/download/Author/TestMod/1.2.0/",
+            "Author-TestMod",
+            client);
+
+        // Verify config is NOT overwritten
+        var configContent = await File.ReadAllTextAsync(existingConfigPath);
+        Assert.Equal("UserCustomSetting=True", configContent);
+
+        // Verify .tsmeta.json is saved
+        var metaPath = Path.Combine(_tempDir, "plugins", "Author-TestMod", ".tsmeta.json");
+        Assert.True(File.Exists(metaPath));
+        var metaText = await File.ReadAllTextAsync(metaPath);
+        Assert.Contains("1.2.0", metaText);
+
+        // Verify check updates detects current version and up to date
+        var packages = new List<ThunderstorePackageSummary>
+        {
+            new("TestMod", "Author-TestMod", "Author", "https://ts.io", "1.2.0", null, "desc", "https://valheim.thunderstore.io/package/download/Author/TestMod/1.2.0/", 10, null, DateTime.UtcNow)
+        };
+        var checkedMods = service.CheckModUpdates(packages);
+        var installedMod = checkedMods.Single(m => m.Name == "TestMod");
+        Assert.Equal("1.2.0", installedMod.InstalledVersion);
+        Assert.False(installedMod.HasUpdate);
+
+        // Verify check updates flags when newer version exists
+        var newerPackages = new List<ThunderstorePackageSummary>
+        {
+            new("TestMod", "Author-TestMod", "Author", "https://ts.io", "1.3.0", null, "desc", "https://valheim.thunderstore.io/package/download/Author/TestMod/1.3.0/", 15, null, DateTime.UtcNow)
+        };
+        var newerCheckedMods = service.CheckModUpdates(newerPackages);
+        var updatedMod = newerCheckedMods.Single(m => m.Name == "TestMod");
+        Assert.True(updatedMod.HasUpdate);
+        Assert.Equal("1.3.0", updatedMod.LatestVersion);
+    }
+
+    private sealed class MockHttpMessageHandler(byte[] responseBytes, long? contentLengthOverride = null) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
@@ -301,6 +402,10 @@ public sealed class ValheimModServiceTests : IDisposable
             {
                 Content = new ByteArrayContent(responseBytes)
             };
+            if (contentLengthOverride.HasValue)
+            {
+                response.Content.Headers.ContentLength = contentLengthOverride.Value;
+            }
             return Task.FromResult(response);
         }
     }

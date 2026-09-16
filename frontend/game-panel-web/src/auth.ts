@@ -30,6 +30,11 @@ export type ValheimMod = {
   lastModifiedUtc: string;
   hasConfig: boolean;
   configFileName?: string | null;
+  packageFullName?: string | null;
+  installedVersion?: string | null;
+  latestVersion?: string | null;
+  hasUpdate?: boolean;
+  updateDownloadUrl?: string | null;
 };
 
 export type ThunderstorePackage = {
@@ -286,6 +291,15 @@ export class AuthProvider {
     return this.request<{ success: boolean; files: string[] }>("/api/valheim/mods/thunderstore/install", {
       method: "POST",
       body: JSON.stringify({ downloadUrl, packageFullName }),
+    });
+  }
+  async valheimModCheckUpdates(): Promise<{ success: boolean; mods: ValheimMod[] }> {
+    return this.request<{ success: boolean; mods: ValheimMod[] }>("/api/valheim/mods/check-updates");
+  }
+  async valheimModUpdate(packageFullName: string, downloadUrl?: string): Promise<{ success: boolean; files: string[] }> {
+    return this.request<{ success: boolean; files: string[] }>("/api/valheim/mods/thunderstore/update", {
+      method: "POST",
+      body: JSON.stringify({ packageFullName, downloadUrl }),
     });
   }
   async valheimExportModpack(): Promise<Blob> {
