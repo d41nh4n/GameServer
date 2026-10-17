@@ -117,7 +117,7 @@ builder.Services.AddSingleton<PzLogService>();
 builder.Services.AddSingleton<PzModService>();
 var pzInstallPath = builder.Configuration["GameServers:ProjectZomboid:InstallPath"] ?? "/home/pzserver/steamcmd/zomboid";
 pzInstallPath = pzInstallPath.Replace("{PZ_HOME}", Environment.GetEnvironmentVariable("PZ_HOME") ?? "/home/pzserver", StringComparison.Ordinal);
-builder.Services.AddSingleton(new PzBuildInfoService(pzInstallPath));
+builder.Services.AddSingleton(new PzBuildInfoService(pzInstallPath, Path.Combine(Environment.GetEnvironmentVariable("PZ_HOME") ?? "/home/pzserver", "Zomboid", "Logs")));
 builder.Services.AddScoped<PzOpsService>();
 builder.Services.AddScoped<PzWorldBackupService>();
 builder.Services.AddScoped<ValheimMonitoringService>();
