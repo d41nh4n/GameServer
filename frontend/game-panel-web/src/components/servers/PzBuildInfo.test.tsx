@@ -6,11 +6,12 @@ import type { AuthProvider } from "../../auth";
 afterEach(() => cleanup());
 
 describe("PzBuildInfo", () => {
-  it("shows installed build and manifest update time", async () => {
-    const auth = { pzBuildInfo: vi.fn().mockResolvedValue({ buildId: "123456", lastUpdatedUtc: "2026-10-17T10:00:00Z", error: null }) } as unknown as AuthProvider;
+  it("shows the Project Zomboid semantic version prominently", async () => {
+    const auth = { pzBuildInfo: vi.fn().mockResolvedValue({ gameVersion: "42.21.0", buildId: "123456", lastUpdatedUtc: "2026-10-17T10:00:00Z", error: null }) } as unknown as AuthProvider;
     render(<PzBuildInfo auth={auth} />);
-    expect(await screen.findByText("123456")).toBeTruthy();
-    expect(screen.getByText("Steam build", { exact: true })).toBeTruthy();
+    expect(await screen.findByText("42.21.0")).toBeTruthy();
+    expect(screen.getByText("Project Zomboid version")).toBeTruthy();
+    expect(screen.getByText("Steam build ID", { exact: true })).toBeTruthy();
     expect(auth.pzBuildInfo).toHaveBeenCalledOnce();
   });
 

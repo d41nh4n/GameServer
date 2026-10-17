@@ -208,8 +208,8 @@ export class AuthProvider {
   async pzLogs(id: string, lines = 200): Promise<{ content: string; lines: number }> {
     return this.request<{ content: string; lines: number }>(`/api/servers/${id}/logs?lines=${lines}`);
   }
-  async pzBuildInfo(): Promise<{ buildId: string | null; lastUpdatedUtc: string | null; error: string | null }> {
-    return this.request<{ buildId: string | null; lastUpdatedUtc: string | null; error: string | null }>("/api/pz/build-info");
+  async pzBuildInfo(): Promise<{ gameVersion: string | null; buildId: string | null; lastUpdatedUtc: string | null; error: string | null }> {
+    return this.request<{ gameVersion: string | null; buildId: string | null; lastUpdatedUtc: string | null; error: string | null }>("/api/pz/build-info");
   }
   async pzHealth(): Promise<any> {
     return this.request<any>("/api/pz/ops/health");
