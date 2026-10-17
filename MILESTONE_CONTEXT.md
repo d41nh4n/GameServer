@@ -281,3 +281,10 @@ Auth JWT + Tailscale whitelist (Option A) — HOÀN THÀNH
 - SignalR Hub: backend/Infrastructure/Hubs/ServerHub.cs
 - DB context: backend/Infrastructure/Data/AppDbContext.cs
 - Sln: backend/GamePanel.slnx
+
+===PZ_STEAM_UPDATE_ON_START===
+- [x] Added fail-closed `ops/pz-update-before-start`: SteamCMD App 380870, start-time lock, validates success output plus installed appmanifest/build ID.
+- [x] Added additive systemd drop-in template `ops/pzserver-game-update.conf`; not installed/enabled on the real unit.
+- [x] Added authenticated `GET /api/pz/build-info` and PZ detail UI for installed build ID + manifest mtime; no claim of latest-versus-installed comparison.
+- [x] Automated tests: backend 125/125; frontend build and focused UI tests; updater mock-process tests.
+- [ ] Operational activation pending: confirm PZ install directory and SteamCMD permissions, install script/drop-in, reload systemd, then verify on an approved maintenance start. No live game/service update was run.

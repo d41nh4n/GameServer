@@ -5,7 +5,7 @@ Control panel for adopted **Valheim** and **Project Zomboid** services, built wi
 ## Current status
 
 - Valheim: `valheim-main.service`, systemd adoption, readiness checks, status, members, logs, backups and safe rollback.
-- Project Zomboid: `pzserver-game.service`, systemd adoption, save-before-stop, RCON, players/kick, logs, config, SandboxVars, mods, operations metrics, backups and safe rollback.
+- Project Zomboid: `pzserver-game.service`, systemd adoption, save-before-stop, RCON, players/kick, logs, config, SandboxVars, mods, operations metrics, backups and safe rollback. When the optional `ops/pzserver-game-update.conf` drop-in is installed, it runs SteamCMD App 380870 before each service start; the backend reads the installed build ID from `appmanifest_380870.acf` for the PZ detail UI.
 - Flask PZ manager remains active on `127.0.0.1:8081` as fallback.
 - Authenticated API with JWT, admin-only mutations, SignalR status updates and optional Tailscale filtering.
 - Asynchronous Start/Stop/Restart queue returns immediately, blocks duplicate operations and exposes job status.

@@ -10,6 +10,7 @@ import ValheimSettings from "./ValheimSettings";
 import ValheimAdmin from "./ValheimAdmin";
 import AuditLogView from "./AuditLogView";
 import ValheimMods from "./ValheimMods";
+import PzBuildInfo from "./PzBuildInfo";
 
 type DetailTab = "controls" | "status" | "settings" | "admin" | "backups" | "logs" | "audit" | "config" | "rcon" | "mods" | "sandbox";
 
@@ -57,6 +58,7 @@ export default function ServerDetailView({ server, auth, loading, onAction, onBa
         </div>
       </div>
       <ServerResourceDetail resource={resources?.servers?.find((x: any) => x.serverId === server.id)} />
+      {isPZ && <PzBuildInfo auth={auth} />}
 
       <div className="detail-tabs">
         {tabs.map(t => (

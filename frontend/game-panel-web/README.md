@@ -28,6 +28,8 @@ Project Zomboid:
 Controls · World Versions · Logs · Config · RCON · Mods · Sandbox
 ```
 
+The PZ detail view also displays the installed Steam dedicated-server build ID and appmanifest timestamp. It does not compare against Steam's latest build.
+
 ## Resource usage
 
 The overview loads `GET /api/resources/overview` and displays host CPU, RAM and disk plus per-server online state, PID, CPU, RSS memory, threads and file descriptors. The same server process snapshot appears at the top of each server detail view.
