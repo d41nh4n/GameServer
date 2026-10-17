@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+readonly APP_ID=380870
+readonly INSTALL_DIR="${PZ_SERVER_INSTALL_PATH:-/home/pzserver/steamcmd/zomboid}"
+readonly STEAMCMD="${PZ_STEAMCMD:-/usr/games/steamcmd}"
+readonly LOCK_FILE="${PZ_UPDATE_LOCK_FILE:-/run/lock/pzserver-steam-update.lock}"
+
+if [[ ! -x "$STEAMCMD" ]]; then
+  echo "PZ update blocked: SteamCMD is not executable at $STEAMCMD" >&2
+  exit 1
+fi
+mkdir -p "$INSTALL_DIR/steamapps" "$(dirname "$LOCK_FILE")"
+exec 9>"$LOCK_FILE"
+flock 9
+
+log_file=$(mktemp)
+trap 'rm -f "$log_file"' EXIT
+
+echo "PZ update: checking public dedicated-server build (Steam app $APP_ID)."
+set +e
+HOME="${HOME:-/home/pzserver}" "$STEAMCMD" \
+  +force_install_dir "$INSTALL_DIR" \
+  +login anonymous \
+  +app_update "$APP_ID" \
+  +quit 2>&1 | tee "$log_file"
+steam_exit=${PIPESTATUS[0]}
+set -e
+
+if ! grep -Eq "Success! App '$APP_ID' (fully installed|already up to date)\\." "$log_file"; then
+  echo "PZ update failed (SteamCMD exit $steam_exit); refusing to start with unverified server files." >&2
+  exit 1
+fi
+if (( steam_exit != 0 )); then
+  echo "PZ update: SteamCMD returned $steam_exit after reporting successful installation; manifest verification will decide whether start is safe."
+fi
+manifest="$INSTALL_DIR/steamapps/appmanifest_${APP_ID}.acf"
+if [[ ! -r "$manifest" ]] || ! grep -Eq '"buildid"[[:space:]]+"[0-9]+"' "$manifest"; then
+  echo "PZ update completed without a readable build manifest; refusing to start." >&2
+  exit 1
+fi
+build_id=""
+while IFS= read -r line; do
+  if [[ "$line" =~ ^[[:space:]]*\"buildid\"[[:space:]]+\"([0-9]+)\" ]]; then
+    build_id="${BASH_REMATCH[1]}"
+    break
+  fi
+done < "$manifest"
+if [[ -z "$build_id" ]]; then
+  echo "PZ update completed without a valid build ID; refusing to start." >&2
+  exit 1
+fi
+echo "PZ update complete; installed server build: $build_id."

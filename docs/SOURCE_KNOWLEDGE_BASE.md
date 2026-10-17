@@ -50,6 +50,7 @@ Raw logs remain in systemd journal/filesystem; SQLite stores audit and lifecycle
 | PZ sandbox | `PzSandboxService.cs` | Safe scalar SandboxVars read/write |
 | PZ logs | `PzLogService.cs` | Bounded journal/file log reads with path protection |
 | PZ mods | `PzModService.cs` | WorkshopItems/Mods read/write with backup |
+| PZ build | `PzBuildInfoService.cs`, `ops/pz-update-before-start` | Installed Steam App 380870 build ID and optional fail-closed update before each systemd start |
 | PZ operations | `PzOpsService.cs` | Host CPU/memory/disk/process metrics |
 | World versions | `PzWorldBackupService.cs`, `ValheimMonitoringService.cs` | Backup, protected HEAD and stopped-only rollback |
 | Persistence services | `AuditLogService.cs`, `SystemEventService.cs` | Writes and bounded queries |
@@ -115,13 +116,20 @@ Never store raw journal lines, passwords, JWTs, RCON passwords or full config te
 
 - Auth: `POST /api/auth/login`
 - Lifecycle: `GET /api/servers`, `POST /api/servers/{id}/start|stop|restart`, `GET /api/operations/{id}`
-- PZ: `/api/pz/rcon/*`, `/api/pz/config*`, `/api/pz/sandbox/*`, `/api/pz/mods`, `/api/pz/logs/*`, `/api/pz/ops/health`, `/api/pz/backups*`
+- PZ: `/api/pz/rcon/*`, `/api/pz/config*`, `/api/pz/sandbox/*`, `/api/pz/mods`, `/api/pz/logs/*`, `/api/pz/ops/health`, `/api/pz/build-info`, `/api/pz/backups*`
 - Valheim: `/api/valheim/monitor`, `/api/valheim/logs`, `/api/valheim/members`, `/api/valheim/backups*`
 - Observability: `/api/audit`, `/api/events`, `/api/resources/overview`
 
 Admin authorization is required for mutations. Authenticated users can read status, logs and resource data.
 
-## 9. Verification
+### PZ Steam update-on-start (opt-in systemd integration)
+
+- `ops/pz-update-before-start` runs SteamCMD anonymously for public dedicated-server App `380870` before each `pzserver-game.service` start. It serializes starts with `flock`, requires SteamCMD's success marker and a valid app manifest/build ID, and returns nonzero on failure so systemd does not launch potentially mismatched binaries.
+- `ops/pzserver-game-update.conf` is an additive systemd drop-in. The source checkout does not install it or alter the live service. Before activation, confirm the real install path matches `/home/pzserver/steamcmd/zomboid`; override `PZ_SERVER_INSTALL_PATH` in the service environment when it differs. Ensure `pzserver` can execute SteamCMD and write the install directory and lock path.
+- Install/update activation is a separate approved operational step: install the updater as root-owned `/usr/local/sbin/pz-update-before-start`, install the drop-in under `/etc/systemd/system/pzserver-game.service.d/`, then `systemctl daemon-reload` and review `systemctl cat pzserver-game.service`. Do not restart the live service merely to validate deployment without explicit approval.
+- `GET /api/pz/build-info` reads the installed appmanifest only. It reports the installed build ID and manifest mtime; it does not assert whether Steam has a newer build. The PZ detail page labels this limitation.
+
+## Verification
 
 ```bash
 cd backend

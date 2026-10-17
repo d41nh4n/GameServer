@@ -115,6 +115,9 @@ builder.Services.AddSingleton<PzConfigService>();
 builder.Services.AddSingleton<PzSandboxService>();
 builder.Services.AddSingleton<PzLogService>();
 builder.Services.AddSingleton<PzModService>();
+var pzInstallPath = builder.Configuration["GameServers:ProjectZomboid:InstallPath"] ?? "/home/pzserver/steamcmd/zomboid";
+pzInstallPath = pzInstallPath.Replace("{PZ_HOME}", Environment.GetEnvironmentVariable("PZ_HOME") ?? "/home/pzserver", StringComparison.Ordinal);
+builder.Services.AddSingleton(new PzBuildInfoService(pzInstallPath));
 builder.Services.AddScoped<PzOpsService>();
 builder.Services.AddScoped<PzWorldBackupService>();
 builder.Services.AddScoped<ValheimMonitoringService>();
@@ -482,6 +485,10 @@ app.MapGet("/api/pz/rcon/players", async (IRconClient rcon) =>
     try { return Results.Ok(new { success = true, output = await rcon.SendCommandAsync("players") }); }
     catch (Exception e) { return Results.Problem(e.Message, statusCode: StatusCodes.Status502BadGateway); }
 }).RequireAuthorization("authenticated");
+
+app.MapGet("/api/pz/build-info", (PzBuildInfoService buildInfo) =>
+    Results.Ok(buildInfo.Read()))
+    .RequireAuthorization("authenticated");
 
 app.MapGet("/api/pz/mods", (PzModService mods) =>
 {
