@@ -54,6 +54,9 @@ public sealed class PzConfigService
     public string WriteUpdates(Dictionary<string, Dictionary<string, string>> updates)
     {
         EnsureFile();
+        var originalText = File.ReadAllText(_iniPath);
+        var lineEnding = originalText.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
+        var hasFinalLineEnding = originalText.EndsWith("\n", StringComparison.Ordinal);
         var original = File.ReadAllLines(_iniPath).ToList();
         var backup = Backup();
 
@@ -92,7 +95,7 @@ public sealed class PzConfigService
                     var km = KeyRe.Match(line);
                     if (km.Success && updates.TryGetValue(currentSection, out var secUpdates) && secUpdates.TryGetValue(km.Groups["key"].Value.Trim(), out var newVal))
                     {
-                        output.Add($"{km.Groups["key"].Value.Trim()}={newVal}\n");
+                        output.Add($"{km.Groups["key"].Value.Trim()}={newVal}");
                         replaced.Add((currentSection, km.Groups["key"].Value.Trim()));
                     }
                     else output.Add(line);
@@ -103,11 +106,18 @@ public sealed class PzConfigService
                 {
                     foreach (var kv in secUp)
                         if (!replaced.Contains((currentSection, kv.Key)))
-                        { output.Add($"{kv.Key}={kv.Value}\n"); replaced.Add((currentSection, kv.Key)); }
+                        { output.Add($"{kv.Key}={kv.Value}"); replaced.Add((currentSection, kv.Key)); }
                 }
                 continue;
             }
-            output.Add(rawLine);
+            var keyMatch = KeyRe.Match(rawLine);
+            if (keyMatch.Success && updates.TryGetValue("global", out var globalUpdates) && globalUpdates.TryGetValue(keyMatch.Groups["key"].Value.Trim(), out var globalValue))
+            {
+                var key = keyMatch.Groups["key"].Value.Trim();
+                output.Add($"{key}={globalValue}");
+                replaced.Add(("global", key));
+            }
+            else output.Add(rawLine);
             i++;
         }
 
@@ -117,7 +127,7 @@ public sealed class PzConfigService
             var missingGlobals = new List<string>();
             foreach (var kv in globalUp)
                 if (!replaced.Contains(("global", kv.Key)))
-                    missingGlobals.Add($"{kv.Key}={kv.Value}\n");
+                    missingGlobals.Add($"{kv.Key}={kv.Value}");
             if (missingGlobals.Count > 0) output.InsertRange(0, missingGlobals);
         }
 
@@ -126,12 +136,12 @@ public sealed class PzConfigService
         {
             if (sec == "global" || seenSections.Contains(sec)) continue;
             if (!updates[sec].Any()) continue;
-            if (!output.Last().EndsWith('\n')) output.Add("\n");
-            output.Add($"[{sec}]\n");
-            foreach (var kv in updates[sec]) output.Add($"{kv.Key}={kv.Value}\n");
+            output.Add($"[{sec}]");
+            foreach (var kv in updates[sec]) output.Add($"{kv.Key}={kv.Value}");
         }
 
-        File.WriteAllText(_iniPath + ".tmp", string.Concat(output));
+        var updatedText = string.Join(lineEnding, output) + (hasFinalLineEnding ? lineEnding : string.Empty);
+        File.WriteAllText(_iniPath + ".tmp", updatedText);
         File.Replace(_iniPath + ".tmp", _iniPath, null);
         return backup;
     }
